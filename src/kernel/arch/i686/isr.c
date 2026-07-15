@@ -2,9 +2,9 @@
 #include "idt.h"
 #include "gdt.h"
 #include "io.h"
-#include <stdio.h>
+#include "../../stdio.h"
+#include "../../debug.h"
 #include <stddef.h>
-#include <debug.h>
 
 #define MODULE          "ISR"
 
