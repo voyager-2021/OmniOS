@@ -14,7 +14,7 @@ on:
       run_tests:
         description: 'Run QEMU headless test after build'
         required: false
-        default: false
+        default: 'false'
         type: boolean
 
 jobs:
@@ -42,15 +42,11 @@ jobs:
             mtools \
             qemu-system-x86 \
             python3-pip \
-            python3-scons \
             wget \
             curl \
             git \
-            xorriso
-
-      - name: Install Python dependencies
-        run: |
-          pip3 install scons || true
+            xorriso \
+            scons
 
       - name: Cache cross-compiler toolchain
         uses: actions/cache@v4
@@ -67,8 +63,6 @@ jobs:
         run: |
           echo "=== Building cross-compiler toolchain ==="
           chmod +x scripts/setup_toolchain.sh
-          # Script expects: setup_toolchain.sh <toolchains_directory>
-          # It will create ~/.toolchains/i686-elf/ with bin/ lib/ etc
           BINUTILS_VERSION=2.37 GCC_VERSION=11.2.0 \
             bash scripts/setup_toolchain.sh ~/.toolchains
           echo "=== Toolchain build complete ==="
@@ -76,11 +70,11 @@ jobs:
 
       - name: Verify toolchain location
         run: |
-          echo "=== Toolchain directory contents ==="
-          ls -la ~/.toolchains/ || echo "Empty"
-          ls -la ~/.toolchains/i686-elf/bin/ || echo "No bin dir"
+          echo "=== Toolchain directory ==="
+          ls -la ~/.toolchains/
+          ls -la ~/.toolchains/i686-elf/bin/
           echo ""
-          echo "=== Searching for i686-elf-gcc ==="
+          echo "=== i686-elf-gcc found at ==="
           find ~/.toolchains -name "i686-elf-gcc" 2>/dev/null
 
       - name: Add toolchain to PATH
@@ -89,9 +83,6 @@ jobs:
 
       - name: Verify toolchain works
         run: |
-          echo "=== PATH ==="
-          echo $PATH
-          echo ""
           echo "=== Compiler versions ==="
           i686-elf-gcc --version
           i686-elf-ld --version
@@ -103,9 +94,6 @@ jobs:
       - name: Build OmniOS
         run: |
           echo "=== Starting OmniOS build ==="
-          # config.py sets toolchain='../.toolchains'
-          # SConstruct reads toolchain path from config.py
-          # We pass it explicitly to be safe
           scons -j$(nproc) \
             config=${{ inputs.build_type }} \
             toolchain=$HOME/.toolchains \
