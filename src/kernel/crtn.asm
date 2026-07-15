@@ -1,9 +1,14 @@
+; ============================================================
+; OmniOS - crtn.asm
+; Provides the epilogue for _init and _fini
+; ============================================================
+
 section .init
-	; gcc will nicely put the contents of crtend.o's .init section here.
-	pop ebp
-	ret
+    ; crtend.o .init content was placed before this
+    pop ebp
+    ret
 
 section .fini
-	; gcc will nicely put the contents of crtend.o's .fini section here.
-	pop ebp
-	ret
+    ; crtend.o .fini content was placed before this
+    pop ebp
+    ret
