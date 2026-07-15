@@ -1,5 +1,4 @@
-# .github/workflows/build.yml
-name: 🔨 Build OmniOS
+name: Build OmniOS
 
 on:
   workflow_dispatch:
@@ -13,7 +12,7 @@ on:
           - debug
           - release
       run_tests:
-        description: 'Run QEMU tests after build'
+        description: 'Run QEMU headless test after build'
         required: false
         default: false
         type: boolean
@@ -21,93 +20,147 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Checkout OmniOS repository
+      - name: Checkout OmniOS
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Cache toolchain
-        uses: actions/cache@v4
-        id: cache-toolchain
-        with:
-          path: |
-            ~/cross
-            ~/.cache/pip
-          key: ${{ runner.os }}-toolchain-i686-elf-gcc-v1
-
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -y
           sudo apt-get install -y \
             build-essential \
-            nasm \
-            qemu-system-x86 \
-            python3 \
-            python3-pip \
-            scons \
-            mtools \
-            xorriso \
-            grub-pc-bin \
-            gcc \
-            g++ \
             bison \
             flex \
             libgmp3-dev \
             libmpc-dev \
             libmpfr-dev \
             texinfo \
+            nasm \
+            mtools \
+            qemu-system-x86 \
+            python3-pip \
+            python3-scons \
             wget \
             curl \
-            git
+            git \
+            xorriso
 
       - name: Install Python dependencies
-        run: pip3 install -r requirements.txt
+        run: |
+          pip3 install scons || true
 
-      - name: Build cross-compiler toolchain (if not cached)
+      - name: Cache cross-compiler toolchain
+        uses: actions/cache@v4
+        id: cache-toolchain
+        with:
+          path: ~/.toolchains
+          key: ${{ runner.os }}-i686-elf-gcc-11.2.0-binutils-2.37-v1
+
+      - name: Create toolchains directory
+        run: mkdir -p ~/.toolchains
+
+      - name: Build cross-compiler toolchain
         if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
+          echo "=== Building cross-compiler toolchain ==="
           chmod +x scripts/setup_toolchain.sh
-          bash scripts/setup_toolchain.sh
-        env:
-          PREFIX: $HOME/cross
-          TARGET: i686-elf
+          # Script expects: setup_toolchain.sh <toolchains_directory>
+          # It will create ~/.toolchains/i686-elf/ with bin/ lib/ etc
+          BINUTILS_VERSION=2.37 GCC_VERSION=11.2.0 \
+            bash scripts/setup_toolchain.sh ~/.toolchains
+          echo "=== Toolchain build complete ==="
+          find ~/.toolchains -name "i686-elf-gcc" | head -5
+
+      - name: Verify toolchain location
+        run: |
+          echo "=== Toolchain directory contents ==="
+          ls -la ~/.toolchains/ || echo "Empty"
+          ls -la ~/.toolchains/i686-elf/bin/ || echo "No bin dir"
+          echo ""
+          echo "=== Searching for i686-elf-gcc ==="
+          find ~/.toolchains -name "i686-elf-gcc" 2>/dev/null
 
       - name: Add toolchain to PATH
-        run: echo "$HOME/cross/bin" >> $GITHUB_PATH
-
-      - name: Verify toolchain
         run: |
+          echo "$HOME/.toolchains/i686-elf/bin" >> $GITHUB_PATH
+
+      - name: Verify toolchain works
+        run: |
+          echo "=== PATH ==="
+          echo $PATH
+          echo ""
+          echo "=== Compiler versions ==="
           i686-elf-gcc --version
           i686-elf-ld --version
+          i686-elf-ar --version
           nasm --version
+          scons --version
+          mtools --version | head -1
 
       - name: Build OmniOS
         run: |
-          scons BUILD_TYPE=${{ inputs.build_type }}
+          echo "=== Starting OmniOS build ==="
+          # config.py sets toolchain='../.toolchains'
+          # SConstruct reads toolchain path from config.py
+          # We pass it explicitly to be safe
+          scons -j$(nproc) \
+            config=${{ inputs.build_type }} \
+            toolchain=$HOME/.toolchains \
+            arch=i686 \
+            imageType=disk \
+            imageFS=fat32 \
+            imageSize=250m
 
       - name: List build artifacts
         run: |
-          echo "=== Build Output ==="
-          find build/ -type f | sort 2>/dev/null || echo "No build directory found"
-          ls -la *.img 2>/dev/null || echo "No disk images in root"
-
-      - name: Upload disk image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: omnios-disk-image-${{ inputs.build_type }}
-          path: |
-            **/*.img
-            **/*.iso
-          retention-days: 7
+          echo "=== Build directory ==="
+          find build/ -type f | sort 2>/dev/null || echo "No build dir"
+          echo ""
+          echo "=== Disk images ==="
+          find . -name "*.img" -o -name "*.iso" | grep -v '.git' | sort
+          echo ""
+          echo "=== ELF binaries ==="
+          find . -name "*.elf" | grep -v '.git' | sort
+          echo ""
+          echo "=== File sizes ==="
+          find . \( -name "*.img" -o -name "*.iso" \) \
+            | grep -v '.git' \
+            | xargs ls -lah 2>/dev/null || echo "No images found"
 
       - name: Run QEMU headless test
         if: ${{ inputs.run_tests == 'true' }}
         run: |
+          IMG=$(find . -name "*.img" | grep -v '.git' | head -1)
+          if [ -z "$IMG" ]; then
+            echo "No disk image found to test"
+            exit 0
+          fi
+          echo "Testing image: $IMG"
           timeout 10 qemu-system-i386 \
-            -drive format=raw,file=$(find . -name "*.img" | head -1) \
+            -drive format=raw,file="$IMG" \
             -display none \
             -serial stdio \
-            -no-reboot || true
-        continue-on-error: true
+            -no-reboot \
+            -m 32M || true
+
+      - name: Upload disk image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: omnios-${{ inputs.build_type }}-image
+          path: |
+            **/*.img
+            **/*.iso
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload kernel ELF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: omnios-${{ inputs.build_type }}-kernel
+          path: |
+            build/**/*.elf
+          retention-days: 14
+          if-no-files-found: warn
