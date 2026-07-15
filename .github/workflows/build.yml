@@ -24,8 +24,6 @@ jobs:
     steps:
       - name: Checkout OmniOS
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install system dependencies
         run: |
@@ -46,13 +44,23 @@ jobs:
             curl \
             git \
             xorriso \
-            scons
+            scons \
+            libguestfs-tools \
+            linux-image-generic
 
-      - name: Install Python modules
+      - name: Install Python dependencies
         run: |
-          pip3 install sh --break-system-packages || \
-          pip3 install sh || \
-          sudo pip3 install sh
+          pip3 install sh --break-system-packages
+
+      - name: Fix guestfs permissions
+        run: |
+          # libguestfs needs a kernel it can read
+          sudo chmod +r /boot/vmlinuz-* || true
+          # Set LIBGUESTFS_BACKEND to direct so it works in CI
+          echo "LIBGUESTFS_BACKEND=direct" >> $GITHUB_ENV
+          # Test guestfs works
+          sudo -E guestfish --version || true
+          guestmount --version || true
 
       - name: Cache cross-compiler toolchain
         uses: actions/cache@v4
@@ -67,46 +75,33 @@ jobs:
       - name: Build cross-compiler toolchain
         if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
-          echo "=== Building cross-compiler toolchain ==="
           chmod +x scripts/setup_toolchain.sh
           BINUTILS_VERSION=2.37 GCC_VERSION=11.2.0 \
             bash scripts/setup_toolchain.sh ~/.toolchains
-          echo "=== Toolchain build complete ==="
-          find ~/.toolchains -name "i686-elf-gcc" | head -5
-
-      - name: Verify toolchain location
-        run: |
-          echo "=== Toolchain directory ==="
-          ls -la ~/.toolchains/
-          ls -la ~/.toolchains/i686-elf/bin/
-          echo ""
-          echo "=== i686-elf-gcc found at ==="
-          find ~/.toolchains -name "i686-elf-gcc" 2>/dev/null
 
       - name: Add toolchain to PATH
-        run: |
-          echo "$HOME/.toolchains/i686-elf/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.toolchains/i686-elf/bin" >> $GITHUB_PATH
 
-      - name: Verify toolchain works
+      - name: Verify toolchain
         run: |
-          echo "=== Compiler versions ==="
           i686-elf-gcc --version
           i686-elf-ld --version
-          i686-elf-ar --version
           nasm --version
           scons --version
-          mtools --version | head -1
 
       - name: Build OmniOS
         run: |
           echo "=== Starting OmniOS build ==="
-          scons -j$(nproc) \
+          sudo -E scons -j$(nproc) \
             config=${{ inputs.build_type }} \
             toolchain=$HOME/.toolchains \
             arch=i686 \
             imageType=disk \
             imageFS=fat32 \
             imageSize=250m
+        env:
+          LIBGUESTFS_BACKEND: direct
+          PATH: /home/runner/.toolchains/i686-elf/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
       - name: List build artifacts
         run: |
@@ -119,20 +114,20 @@ jobs:
           echo "=== ELF binaries ==="
           find . -name "*.elf" | grep -v '.git' | sort
           echo ""
-          echo "=== File sizes ==="
+          echo "=== Sizes ==="
           find . \( -name "*.img" -o -name "*.iso" \) \
             | grep -v '.git' \
-            | xargs ls -lah 2>/dev/null || echo "No images found"
+            | xargs ls -lah 2>/dev/null || echo "No images"
 
       - name: Run QEMU headless test
         if: ${{ inputs.run_tests == 'true' }}
         run: |
           IMG=$(find . -name "*.img" | grep -v '.git' | head -1)
           if [ -z "$IMG" ]; then
-            echo "No disk image found to test"
+            echo "No disk image found"
             exit 0
           fi
-          echo "Testing image: $IMG"
+          echo "Testing: $IMG"
           timeout 10 qemu-system-i386 \
             -drive format=raw,file="$IMG" \
             -display none \
@@ -140,7 +135,7 @@ jobs:
             -no-reboot \
             -m 32M || true
 
-      - name: Upload disk image artifact
+      - name: Upload disk image
         uses: actions/upload-artifact@v4
         with:
           name: omnios-${{ inputs.build_type }}-image
@@ -150,11 +145,10 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-      - name: Upload kernel ELF artifact
+      - name: Upload kernel ELF
         uses: actions/upload-artifact@v4
         with:
           name: omnios-${{ inputs.build_type }}-kernel
-          path: |
-            build/**/*.elf
+          path: build/**/*.elf
           retention-days: 14
           if-no-files-found: warn
