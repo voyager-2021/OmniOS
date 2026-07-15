@@ -33,7 +33,7 @@ void puts(const char *s)
 /* ---- Internal: write a single char into a buffer or to VGA ---- */
 typedef struct {
     char  *buf;
-    int    size;   /* 0 = unbounded (write to VGA) */
+    int    size;
     int    pos;
 } PrintCtx;
 
@@ -57,23 +57,25 @@ static void ctx_puts(PrintCtx *ctx, const char *s)
 
 /* ---- Number formatting ---- */
 static void fmt_number(PrintCtx *ctx,
-                        uint64_t  val,
-                        int       base,
-                        bool      upper,
-                        bool      is_signed,
-                        bool      negative,
-                        int       width,
-                        char      pad,
-                        bool      left_align,
-                        bool      show_sign,
-                        bool      alt_form)
+                       uint64_t  val,
+                       int       base,
+                       bool      upper,
+                       bool      is_signed,
+                       bool      negative,
+                       int       width,
+                       char      pad,
+                       bool      left_align,
+                       bool      show_sign,
+                       bool      alt_form)
 {
     static const char *lo = "0123456789abcdef";
     static const char *hi = "0123456789ABCDEF";
     const char *digits = upper ? hi : lo;
 
-    char   tmp[66];
-    int    len = 0;
+    char tmp[66];
+    int  len = 0;
+
+    (void)is_signed;
 
     if (val == 0) {
         tmp[len++] = '0';
@@ -85,7 +87,6 @@ static void fmt_number(PrintCtx *ctx,
         }
     }
 
-    /* Build prefix string */
     char prefix[4] = {0};
     int  pfx_len   = 0;
     if (negative)        prefix[pfx_len++] = '-';
@@ -101,7 +102,6 @@ static void fmt_number(PrintCtx *ctx,
     int pad_n = (width > total) ? (width - total) : 0;
 
     if (!left_align && pad == '0') {
-        /* prefix first, then zero padding */
         for (int i = 0; i < pfx_len; i++) ctx_putc(ctx, prefix[i]);
         for (int i = 0; i < pad_n; i++)   ctx_putc(ctx, '0');
     } else if (!left_align) {
@@ -111,7 +111,6 @@ static void fmt_number(PrintCtx *ctx,
         for (int i = 0; i < pfx_len; i++) ctx_putc(ctx, prefix[i]);
     }
 
-    /* Digits (they are reversed in tmp) */
     for (int i = len - 1; i >= 0; i--) ctx_putc(ctx, tmp[i]);
 
     if (left_align)
@@ -123,9 +122,8 @@ static int do_printf(PrintCtx *ctx, const char *fmt, va_list ap)
 {
     while (*fmt) {
         if (*fmt != '%') { ctx_putc(ctx, *fmt++); continue; }
-        fmt++; /* skip '%' */
+        fmt++;
 
-        /* Flags */
         bool left_align = false;
         bool show_sign  = false;
         bool alt_form   = false;
@@ -140,11 +138,9 @@ static int do_printf(PrintCtx *ctx, const char *fmt, va_list ap)
             }
         }
 
-        /* Pad char */
         char pad = ' ';
         if (*fmt == '0' && !left_align) { pad = '0'; fmt++; }
 
-        /* Width */
         int width = 0;
         if (*fmt == '*') {
             width = va_arg(ap, int);
@@ -157,14 +153,12 @@ static int do_printf(PrintCtx *ctx, const char *fmt, va_list ap)
             }
         }
 
-        /* Precision (ignored for now, just consume) */
         if (*fmt == '.') {
             fmt++;
             if (*fmt == '*') { va_arg(ap, int); fmt++; }
             else while (*fmt >= '0' && *fmt <= '9') fmt++;
         }
 
-        /* Length modifier */
         bool is_long  = false;
         bool is_llong = false;
         if (*fmt == 'l') {
@@ -172,11 +166,10 @@ static int do_printf(PrintCtx *ctx, const char *fmt, va_list ap)
             if (*fmt == 'l') { is_llong = true; fmt++; }
             else              { is_long  = true; }
         } else if (*fmt == 'h') {
-            fmt++; /* treat as int */
+            fmt++;
             if (*fmt == 'h') fmt++;
         }
 
-        /* Specifier */
         char spec = *fmt++;
         switch (spec) {
             case 'd': case 'i': {
@@ -222,7 +215,6 @@ static int do_printf(PrintCtx *ctx, const char *fmt, va_list ap)
                 break;
             }
             case 'b': {
-                /* binary - OmniOS extension */
                 uint64_t v = is_llong ? va_arg(ap, unsigned long long)
                            : is_long  ? va_arg(ap, unsigned long)
                                       : va_arg(ap, unsigned int);

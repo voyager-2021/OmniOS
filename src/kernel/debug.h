@@ -1,18 +1,29 @@
-#include <stdio.h>
+#pragma once
+#include <stdint.h>
+#include <stdarg.h>
+#include <stdbool.h>
 
-#define MIN_LOG_LEVEL LVL_DEBUG
+/* ============================================================
+   OmniOS - Kernel Debug / Logging
+   Direct VGA output, no VFS dependencies.
+   ============================================================ */
 
 typedef enum {
-    LVL_DEBUG = 0,
-    LVL_INFO = 1,
-    LVL_WARN = 2,
-    LVL_ERROR = 3,
-    LVL_CRITICAL = 4
+    LVL_DEBUG    = 0,
+    LVL_INFO     = 1,
+    LVL_WARN     = 2,
+    LVL_ERROR    = 3,
+    LVL_CRITICAL = 4,
 } DebugLevel;
 
-void logf(const char* module, DebugLevel level, const char* fmt, ...);
-#define log_debug(module, ...) logf(module, LVL_DEBUG, __VA_ARGS__)
-#define log_info(module, ...) logf(module, LVL_INFO, __VA_ARGS__)
-#define log_warn(module, ...) logf(module, LVL_WARN, __VA_ARGS__)
-#define log_err(module, ...) logf(module, LVL_ERROR, __VA_ARGS__)
-#define log_crit(module, ...) logf(module, LVL_CRITICAL, __VA_ARGS__)
+#ifndef MIN_LOG_LEVEL
+#  define MIN_LOG_LEVEL LVL_DEBUG
+#endif
+
+void logf(const char *module, DebugLevel level, const char *fmt, ...);
+
+#define log_debug(mod, fmt, ...)    logf(mod, LVL_DEBUG,    fmt, ##__VA_ARGS__)
+#define log_info(mod, fmt, ...)     logf(mod, LVL_INFO,     fmt, ##__VA_ARGS__)
+#define log_warn(mod, fmt, ...)     logf(mod, LVL_WARN,     fmt, ##__VA_ARGS__)
+#define log_error(mod, fmt, ...)    logf(mod, LVL_ERROR,    fmt, ##__VA_ARGS__)
+#define log_critical(mod, fmt, ...) logf(mod, LVL_CRITICAL, fmt, ##__VA_ARGS__)

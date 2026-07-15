@@ -1,30 +1,50 @@
+/* ============================================================
+   OmniOS - Kernel Debug / Logging
+   Direct VGA output. No VFS, no fputs/fprintf/fputc.
+   ============================================================ */
 #include "debug.h"
-#include <stdio.h>
+#include "stdio.h"
+#include "arch/i686/vga_text.h"
+#include <stdarg.h>
 
-static const char* const g_LogSeverityColors[] =
-{
-    [LVL_DEBUG]        = "\033[2;37m",
-    [LVL_INFO]         = "\033[37m",
-    [LVL_WARN]         = "\033[1;33m",
-    [LVL_ERROR]        = "\033[1;31m",
-    [LVL_CRITICAL]     = "\033[1;37;41m",
+static const uint8_t g_LevelColors[] = {
+    [LVL_DEBUG]    = VGA_MAKE_COLOR(VGA_COLOR_DARK_GREY,   VGA_COLOR_BLACK),
+    [LVL_INFO]     = VGA_MAKE_COLOR(VGA_COLOR_LIGHT_GREY,  VGA_COLOR_BLACK),
+    [LVL_WARN]     = VGA_MAKE_COLOR(VGA_COLOR_YELLOW,      VGA_COLOR_BLACK),
+    [LVL_ERROR]    = VGA_MAKE_COLOR(VGA_COLOR_LIGHT_RED,   VGA_COLOR_BLACK),
+    [LVL_CRITICAL] = VGA_MAKE_COLOR(VGA_COLOR_WHITE,       VGA_COLOR_RED),
 };
 
-static const char* const g_ColorReset = "\033[0m";
+static const char *const g_LevelNames[] = {
+    [LVL_DEBUG]    = "DEBUG",
+    [LVL_INFO]     = "INFO ",
+    [LVL_WARN]     = "WARN ",
+    [LVL_ERROR]    = "ERROR",
+    [LVL_CRITICAL] = "CRIT ",
+};
 
-void logf(const char* module, DebugLevel level, const char* fmt, ...)
+void logf(const char *module, DebugLevel level, const char *fmt, ...)
 {
-    va_list args;
-    va_start(args, fmt);
-
     if (level < MIN_LOG_LEVEL)
         return;
 
-    fputs(g_LogSeverityColors[level], VFS_FD_DEBUG);    // set color depending on level
-    fprintf(VFS_FD_DEBUG, "[%s] ", module);             // write module
-    vfprintf(VFS_FD_DEBUG, fmt, args);                  // write text
-    fputs(g_ColorReset, VFS_FD_DEBUG);                  // reset format
-    fputc('\n', VFS_FD_DEBUG);                          // newline
+    va_list args;
+    va_start(args, fmt);
 
-    va_end(args);  
+    uint8_t old_color = VGA_GetColor();
+
+    VGA_SetColor(g_LevelColors[level]);
+    puts("[");
+    puts(g_LevelNames[level]);
+    puts("][");
+    puts(module ? module : "?");
+    puts("] ");
+
+    VGA_SetColor(VGA_MAKE_COLOR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+    vprintf(fmt, args);
+    putc('\n');
+
+    VGA_SetColor(old_color);
+
+    va_end(args);
 }

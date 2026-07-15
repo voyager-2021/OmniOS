@@ -11,7 +11,6 @@
 #define VGA_HEIGHT  25
 #define VGA_MEMORY  ((volatile uint16_t *)0xB8000)
 
-/* ---- Colour constants ---- */
 typedef enum {
     VGA_COLOR_BLACK         = 0,
     VGA_COLOR_BLUE          = 1,
@@ -31,10 +30,8 @@ typedef enum {
     VGA_COLOR_WHITE         = 15,
 } VGA_Color;
 
-/* Pack foreground + background into one byte */
 #define VGA_MAKE_COLOR(fg, bg)  ((uint8_t)(((bg) << 4) | ((fg) & 0x0F)))
 
-/* Convenience colour combos used by the shell */
 #define VGA_COL_NORMAL   VGA_MAKE_COLOR(VGA_COLOR_LIGHT_GREY,  VGA_COLOR_BLACK)
 #define VGA_COL_PROMPT   VGA_MAKE_COLOR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK)
 #define VGA_COL_ERROR    VGA_MAKE_COLOR(VGA_COLOR_LIGHT_RED,   VGA_COLOR_BLACK)
@@ -45,7 +42,6 @@ typedef enum {
 #define VGA_COL_WHITE    VGA_MAKE_COLOR(VGA_COLOR_WHITE,       VGA_COLOR_BLACK)
 #define VGA_COL_INPUT    VGA_MAKE_COLOR(VGA_COLOR_WHITE,       VGA_COLOR_BLACK)
 
-/* ---- Public API ---- */
 void    VGA_Initialize(void);
 void    VGA_ClearScreen(void);
 void    VGA_SetColor(uint8_t color);

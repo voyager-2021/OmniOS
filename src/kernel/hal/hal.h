@@ -1,3 +1,7 @@
 #pragma once
 
-void HAL_Initialize();
+/* ============================================================
+   OmniOS - Hardware Abstraction Layer
+   ============================================================ */
+
+void HAL_Initialize(void);

@@ -8,27 +8,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* ---- VGA I/O ports ---- */
 #define VGA_CTRL_REG   0x3D4
 #define VGA_DATA_REG   0x3D5
 
-/* ---- Internal state ---- */
 static int      s_cursor_x   = 0;
 static int      s_cursor_y   = 0;
 static uint8_t  s_color      = VGA_COL_NORMAL;
 
-/* Save / restore slots */
 static int      s_saved_x    = 0;
 static int      s_saved_y    = 0;
 static uint8_t  s_saved_col  = VGA_COL_NORMAL;
 
-/* ---- Helper: build a VGA cell word ---- */
 static inline uint16_t make_cell(char c, uint8_t color)
 {
     return (uint16_t)((uint8_t)c) | ((uint16_t)color << 8);
 }
 
-/* ---- Hardware cursor ---- */
 static void hw_cursor_update(void)
 {
     uint16_t pos = (uint16_t)(s_cursor_y * VGA_WIDTH + s_cursor_x);
@@ -52,7 +47,6 @@ void VGA_DisableCursor(void)
     i686_outb(VGA_DATA_REG, 0x20);
 }
 
-/* ---- Scroll ---- */
 void VGA_ScrollUp(int lines)
 {
     if (lines <= 0) return;
@@ -67,8 +61,6 @@ void VGA_ScrollUp(int lines)
         for (int x = 0; x < VGA_WIDTH; x++)
             VGA_MEMORY[y * VGA_WIDTH + x] = make_cell(' ', s_color);
 }
-
-/* ---- Public API ---- */
 
 void VGA_Initialize(void)
 {
@@ -158,7 +150,7 @@ void VGA_PutChar(char c)
                 s_cursor_x = 0;
                 s_cursor_y++;
             }
-            if (c >= 0x20) { /* only printable */
+            if ((unsigned char)c >= 0x20) {
                 VGA_MEMORY[s_cursor_y * VGA_WIDTH + s_cursor_x] =
                     make_cell(c, s_color);
                 s_cursor_x++;
@@ -166,7 +158,6 @@ void VGA_PutChar(char c)
             break;
     }
 
-    /* Scroll if past bottom */
     if (s_cursor_y >= VGA_HEIGHT) {
         VGA_ScrollUp(1);
         s_cursor_y = VGA_HEIGHT - 1;
