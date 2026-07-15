@@ -1,265 +1,314 @@
-#include <stdio.h>
-#include <arch/i686/io.h>
-
+/* ============================================================
+   OmniOS - Kernel stdio
+   Wires putc/puts/printf to the VGA text driver.
+   Supports: %d %i %u %x %X %o %b %s %c %p %% with
+             width, zero-padding, left-align (-), sign (+)
+   ============================================================ */
+#include "stdio.h"
+#include "arch/i686/vga_text.h"
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
-#include <hal/vfs.h>
-
-void fputc(char c, fd_t file)
-{
-    VFS_Write(file, &c, sizeof(c));
-}
-
-void fputs(const char* str, fd_t file)
-{
-    while(*str)
-    {
-        fputc(*str, file);
-        str++;
-    }
-}
-
-#define PRINTF_STATE_NORMAL         0
-#define PRINTF_STATE_LENGTH         1
-#define PRINTF_STATE_LENGTH_SHORT   2
-#define PRINTF_STATE_LENGTH_LONG    3
-#define PRINTF_STATE_SPEC           4
-
-#define PRINTF_LENGTH_DEFAULT       0
-#define PRINTF_LENGTH_SHORT_SHORT   1
-#define PRINTF_LENGTH_SHORT         2
-#define PRINTF_LENGTH_LONG          3
-#define PRINTF_LENGTH_LONG_LONG     4
-
-const char g_HexChars[] = "0123456789abcdef";
-
-void fprintf_unsigned(fd_t file, unsigned long long number, int radix)
-{
-    char buffer[32];
-    int pos = 0;
-
-    // convert number to ASCII
-    do 
-    {
-        unsigned long long rem = number % radix;
-        number /= radix;
-        buffer[pos++] = g_HexChars[rem];
-    } while (number > 0);
-
-    // print number in reverse order
-    while (--pos >= 0)
-        fputc(buffer[pos], file);
-}
-
-void fprintf_signed(fd_t file, long long number, int radix)
-{
-    if (number < 0)
-    {
-        fputc('-', file);
-        fprintf_unsigned(file, -number, radix);
-    }
-    else fprintf_unsigned(file, number, radix);
-}
-
-void vfprintf(fd_t file, const char* fmt, va_list args)
-{
-    int state = PRINTF_STATE_NORMAL;
-    int length = PRINTF_LENGTH_DEFAULT;
-    int radix = 10;
-    bool sign = false;
-    bool number = false;
-
-    while (*fmt)
-    {
-        switch (state)
-        {
-            case PRINTF_STATE_NORMAL:
-                switch (*fmt)
-                {
-                    case '%':   state = PRINTF_STATE_LENGTH;
-                                break;
-                    default:    fputc(*fmt, file);
-                                break;
-                }
-                break;
-
-            case PRINTF_STATE_LENGTH:
-                switch (*fmt)
-                {
-                    case 'h':   length = PRINTF_LENGTH_SHORT;
-                                state = PRINTF_STATE_LENGTH_SHORT;
-                                break;
-                    case 'l':   length = PRINTF_LENGTH_LONG;
-                                state = PRINTF_STATE_LENGTH_LONG;
-                                break;
-                    default:    goto PRINTF_STATE_SPEC_;
-                }
-                break;
-
-            case PRINTF_STATE_LENGTH_SHORT:
-                if (*fmt == 'h')
-                {
-                    length = PRINTF_LENGTH_SHORT_SHORT;
-                    state = PRINTF_STATE_SPEC;
-                }
-                else goto PRINTF_STATE_SPEC_;
-                break;
-
-            case PRINTF_STATE_LENGTH_LONG:
-                if (*fmt == 'l')
-                {
-                    length = PRINTF_LENGTH_LONG_LONG;
-                    state = PRINTF_STATE_SPEC;
-                }
-                else goto PRINTF_STATE_SPEC_;
-                break;
-
-            case PRINTF_STATE_SPEC:
-            PRINTF_STATE_SPEC_:
-                switch (*fmt)
-                {
-                    case 'c':   fputc((char)va_arg(args, int), file);
-                                break;
-
-                    case 's':   
-                                fputs(va_arg(args, const char*), file);
-                                break;
-
-                    case '%':   fputc('%', file);
-                                break;
-
-                    case 'd':
-                    case 'i':   radix = 10; sign = true; number = true;
-                                break;
-
-                    case 'u':   radix = 10; sign = false; number = true;
-                                break;
-
-                    case 'X':
-                    case 'x':
-                    case 'p':   radix = 16; sign = false; number = true;
-                                break;
-
-                    case 'o':   radix = 8; sign = false; number = true;
-                                break;
-
-                    // ignore invalid spec
-                    default:    break;
-                }
-
-                if (number)
-                {
-                    if (sign)
-                    {
-                        switch (length)
-                        {
-                        case PRINTF_LENGTH_SHORT_SHORT:
-                        case PRINTF_LENGTH_SHORT:
-                        case PRINTF_LENGTH_DEFAULT:     fprintf_signed(file, va_arg(args, int), radix);
-                                                        break;
-
-                        case PRINTF_LENGTH_LONG:        fprintf_signed(file, va_arg(args, long), radix);
-                                                        break;
-
-                        case PRINTF_LENGTH_LONG_LONG:   fprintf_signed(file, va_arg(args, long long), radix);
-                                                        break;
-                        }
-                    }
-                    else
-                    {
-                        switch (length)
-                        {
-                        case PRINTF_LENGTH_SHORT_SHORT:
-                        case PRINTF_LENGTH_SHORT:
-                        case PRINTF_LENGTH_DEFAULT:     fprintf_unsigned(file, va_arg(args, unsigned int), radix);
-                                                        break;
-                                                        
-                        case PRINTF_LENGTH_LONG:        fprintf_unsigned(file, va_arg(args, unsigned  long), radix);
-                                                        break;
-
-                        case PRINTF_LENGTH_LONG_LONG:   fprintf_unsigned(file, va_arg(args, unsigned  long long), radix);
-                                                        break;
-                        }
-                    }
-                }
-
-                // reset state
-                state = PRINTF_STATE_NORMAL;
-                length = PRINTF_LENGTH_DEFAULT;
-                radix = 10;
-                sign = false;
-                number = false;
-                break;
-        }
-
-        fmt++;
-    }
-}
-
-void fprintf(fd_t file, const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    vfprintf(file, fmt, args);
-    va_end(args);
-}
-
-void fprint_buffer(fd_t file, const char* msg, const void* buffer, uint32_t count)
-{
-    const uint8_t* u8Buffer = (const uint8_t*)buffer;
-    
-    fputs(msg, file);
-    for (uint16_t i = 0; i < count; i++)
-    {
-        fputc(g_HexChars[u8Buffer[i] >> 4], file);
-        fputc(g_HexChars[u8Buffer[i] & 0xF], file);
-    }
-    fputs("\n", file);
-}
+/* ---- Low-level output ---- */
 
 void putc(char c)
 {
-    fputc(c, VFS_FD_STDOUT);
+    VGA_PutChar(c);
 }
 
-void puts(const char* str)
+int putchar(int c)
 {
-    fputs(str, VFS_FD_STDOUT);
+    VGA_PutChar((char)c);
+    return (unsigned char)c;
 }
 
-void printf(const char* fmt, ...)
+void puts(const char *s)
 {
-    va_list args;
-    va_start(args, fmt);
-    vfprintf(VFS_FD_STDOUT, fmt, args);
-    va_end(args);
+    if (!s) s = "(null)";
+    while (*s) VGA_PutChar(*s++);
 }
 
-void print_buffer(const char* msg, const void* buffer, uint32_t count)
+/* ---- Internal: write a single char into a buffer or to VGA ---- */
+typedef struct {
+    char  *buf;
+    int    size;   /* 0 = unbounded (write to VGA) */
+    int    pos;
+} PrintCtx;
+
+static void ctx_putc(PrintCtx *ctx, char c)
 {
-    fprint_buffer(VFS_FD_STDOUT, msg, buffer, count);
+    if (!ctx->buf) {
+        VGA_PutChar(c);
+    } else {
+        if (ctx->size == 0 || ctx->pos < ctx->size - 1) {
+            ctx->buf[ctx->pos] = c;
+        }
+    }
+    ctx->pos++;
 }
 
-void debugc(char c)
+static void ctx_puts(PrintCtx *ctx, const char *s)
 {
-    fputc(c, VFS_FD_DEBUG);
+    if (!s) s = "(null)";
+    while (*s) ctx_putc(ctx, *s++);
 }
 
-void debugs(const char* str)
+/* ---- Number formatting ---- */
+static void fmt_number(PrintCtx *ctx,
+                        uint64_t  val,
+                        int       base,
+                        bool      upper,
+                        bool      is_signed,
+                        bool      negative,
+                        int       width,
+                        char      pad,
+                        bool      left_align,
+                        bool      show_sign,
+                        bool      alt_form)
 {
-    fputs(str, VFS_FD_DEBUG);
+    static const char *lo = "0123456789abcdef";
+    static const char *hi = "0123456789ABCDEF";
+    const char *digits = upper ? hi : lo;
+
+    char   tmp[66];
+    int    len = 0;
+
+    if (val == 0) {
+        tmp[len++] = '0';
+    } else {
+        uint64_t v = val;
+        while (v > 0) {
+            tmp[len++] = digits[v % base];
+            v /= base;
+        }
+    }
+
+    /* Build prefix string */
+    char prefix[4] = {0};
+    int  pfx_len   = 0;
+    if (negative)        prefix[pfx_len++] = '-';
+    else if (show_sign)  prefix[pfx_len++] = '+';
+    if (alt_form && base == 16 && val != 0) {
+        prefix[pfx_len++] = '0';
+        prefix[pfx_len++] = upper ? 'X' : 'x';
+    } else if (alt_form && base == 8 && val != 0) {
+        prefix[pfx_len++] = '0';
+    }
+
+    int total = len + pfx_len;
+    int pad_n = (width > total) ? (width - total) : 0;
+
+    if (!left_align && pad == '0') {
+        /* prefix first, then zero padding */
+        for (int i = 0; i < pfx_len; i++) ctx_putc(ctx, prefix[i]);
+        for (int i = 0; i < pad_n; i++)   ctx_putc(ctx, '0');
+    } else if (!left_align) {
+        for (int i = 0; i < pad_n; i++)   ctx_putc(ctx, ' ');
+        for (int i = 0; i < pfx_len; i++) ctx_putc(ctx, prefix[i]);
+    } else {
+        for (int i = 0; i < pfx_len; i++) ctx_putc(ctx, prefix[i]);
+    }
+
+    /* Digits (they are reversed in tmp) */
+    for (int i = len - 1; i >= 0; i--) ctx_putc(ctx, tmp[i]);
+
+    if (left_align)
+        for (int i = 0; i < pad_n; i++) ctx_putc(ctx, ' ');
 }
 
-void debugf(const char* fmt, ...)
+/* ---- Core formatter ---- */
+static int do_printf(PrintCtx *ctx, const char *fmt, va_list ap)
 {
-    va_list args;
-    va_start(args, fmt);
-    vfprintf(VFS_FD_DEBUG, fmt, args);
-    va_end(args);
+    while (*fmt) {
+        if (*fmt != '%') { ctx_putc(ctx, *fmt++); continue; }
+        fmt++; /* skip '%' */
+
+        /* Flags */
+        bool left_align = false;
+        bool show_sign  = false;
+        bool alt_form   = false;
+        bool done_flags = false;
+        while (!done_flags) {
+            switch (*fmt) {
+                case '-': left_align = true; fmt++; break;
+                case '+': show_sign  = true; fmt++; break;
+                case '#': alt_form   = true; fmt++; break;
+                case ' ': fmt++;             break;
+                default:  done_flags = true; break;
+            }
+        }
+
+        /* Pad char */
+        char pad = ' ';
+        if (*fmt == '0' && !left_align) { pad = '0'; fmt++; }
+
+        /* Width */
+        int width = 0;
+        if (*fmt == '*') {
+            width = va_arg(ap, int);
+            if (width < 0) { left_align = true; width = -width; }
+            fmt++;
+        } else {
+            while (*fmt >= '0' && *fmt <= '9') {
+                width = width * 10 + (*fmt - '0');
+                fmt++;
+            }
+        }
+
+        /* Precision (ignored for now, just consume) */
+        if (*fmt == '.') {
+            fmt++;
+            if (*fmt == '*') { va_arg(ap, int); fmt++; }
+            else while (*fmt >= '0' && *fmt <= '9') fmt++;
+        }
+
+        /* Length modifier */
+        bool is_long  = false;
+        bool is_llong = false;
+        if (*fmt == 'l') {
+            fmt++;
+            if (*fmt == 'l') { is_llong = true; fmt++; }
+            else              { is_long  = true; }
+        } else if (*fmt == 'h') {
+            fmt++; /* treat as int */
+            if (*fmt == 'h') fmt++;
+        }
+
+        /* Specifier */
+        char spec = *fmt++;
+        switch (spec) {
+            case 'd': case 'i': {
+                int64_t v = is_llong ? va_arg(ap, long long)
+                          : is_long  ? va_arg(ap, long)
+                                     : va_arg(ap, int);
+                bool neg = (v < 0);
+                uint64_t uv = neg ? (uint64_t)(-(v + 1)) + 1 : (uint64_t)v;
+                fmt_number(ctx, uv, 10, false, true, neg,
+                           width, pad, left_align, show_sign, false);
+                break;
+            }
+            case 'u': {
+                uint64_t v = is_llong ? va_arg(ap, unsigned long long)
+                           : is_long  ? va_arg(ap, unsigned long)
+                                      : va_arg(ap, unsigned int);
+                fmt_number(ctx, v, 10, false, false, false,
+                           width, pad, left_align, show_sign, false);
+                break;
+            }
+            case 'x': {
+                uint64_t v = is_llong ? va_arg(ap, unsigned long long)
+                           : is_long  ? va_arg(ap, unsigned long)
+                                      : va_arg(ap, unsigned int);
+                fmt_number(ctx, v, 16, false, false, false,
+                           width, pad, left_align, false, alt_form);
+                break;
+            }
+            case 'X': {
+                uint64_t v = is_llong ? va_arg(ap, unsigned long long)
+                           : is_long  ? va_arg(ap, unsigned long)
+                                      : va_arg(ap, unsigned int);
+                fmt_number(ctx, v, 16, true, false, false,
+                           width, pad, left_align, false, alt_form);
+                break;
+            }
+            case 'o': {
+                uint64_t v = is_llong ? va_arg(ap, unsigned long long)
+                           : is_long  ? va_arg(ap, unsigned long)
+                                      : va_arg(ap, unsigned int);
+                fmt_number(ctx, v, 8, false, false, false,
+                           width, pad, left_align, false, alt_form);
+                break;
+            }
+            case 'b': {
+                /* binary - OmniOS extension */
+                uint64_t v = is_llong ? va_arg(ap, unsigned long long)
+                           : is_long  ? va_arg(ap, unsigned long)
+                                      : va_arg(ap, unsigned int);
+                fmt_number(ctx, v, 2, false, false, false,
+                           width, pad, left_align, false, false);
+                break;
+            }
+            case 'p': {
+                uintptr_t v = (uintptr_t)va_arg(ap, void *);
+                ctx_puts(ctx, "0x");
+                fmt_number(ctx, (uint64_t)v, 16, false, false, false,
+                           8, '0', false, false, false);
+                break;
+            }
+            case 's': {
+                const char *s = va_arg(ap, const char *);
+                if (!s) s = "(null)";
+                int slen = 0;
+                const char *t = s;
+                while (*t++) slen++;
+                int pad_n = (width > slen) ? width - slen : 0;
+                if (!left_align)
+                    for (int i = 0; i < pad_n; i++) ctx_putc(ctx, ' ');
+                ctx_puts(ctx, s);
+                if (left_align)
+                    for (int i = 0; i < pad_n; i++) ctx_putc(ctx, ' ');
+                break;
+            }
+            case 'c':
+                ctx_putc(ctx, (char)va_arg(ap, int));
+                break;
+            case '%':
+                ctx_putc(ctx, '%');
+                break;
+            case 0:
+                goto done;
+            default:
+                ctx_putc(ctx, '%');
+                ctx_putc(ctx, spec);
+                break;
+        }
+    }
+done:
+    if (ctx->buf && (ctx->size == 0 || ctx->pos < ctx->size))
+        ctx->buf[ctx->pos] = '\0';
+    return ctx->pos;
 }
 
-void debug_buffer(const char* msg, const void* buffer, uint32_t count)
+/* ---- Public API ---- */
+
+int vprintf(const char *fmt, va_list args)
 {
-    fprint_buffer(VFS_FD_DEBUG, msg, buffer, count);
+    PrintCtx ctx = { .buf = NULL, .size = 0, .pos = 0 };
+    return do_printf(&ctx, fmt, args);
+}
+
+int printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vprintf(fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+int vsprintf(char *buf, const char *fmt, va_list args)
+{
+    PrintCtx ctx = { .buf = buf, .size = 0, .pos = 0 };
+    return do_printf(&ctx, fmt, args);
+}
+
+int sprintf(char *buf, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsprintf(buf, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+int snprintf(char *buf, int size, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    PrintCtx ctx = { .buf = buf, .size = size, .pos = 0 };
+    int r = do_printf(&ctx, fmt, ap);
+    va_end(ap);
+    return r;
 }

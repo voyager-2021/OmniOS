@@ -1,110 +1,207 @@
-#include <stdio.h>
-#include <arch/i686/io.h>
+/* ============================================================
+   OmniOS - VGA Text Mode Driver
+   Supports: colour, scrolling, hardware cursor, backspace,
+             tabs, carriage return, screen save/restore
+   ============================================================ */
+#include "vga_text.h"
+#include "io.h"
+#include <stddef.h>
+#include <stdint.h>
 
-#include <stdarg.h>
-#include <stdbool.h>
+/* ---- VGA I/O ports ---- */
+#define VGA_CTRL_REG   0x3D4
+#define VGA_DATA_REG   0x3D5
 
-const unsigned SCREEN_WIDTH = 80;
-const unsigned SCREEN_HEIGHT = 25;
-const uint8_t DEFAULT_COLOR = 0x7;
+/* ---- Internal state ---- */
+static int      s_cursor_x   = 0;
+static int      s_cursor_y   = 0;
+static uint8_t  s_color      = VGA_COL_NORMAL;
 
-uint8_t* g_ScreenBuffer = (uint8_t*)0xB8000;
-int g_ScreenX = 0, g_ScreenY = 0;
+/* Save / restore slots */
+static int      s_saved_x    = 0;
+static int      s_saved_y    = 0;
+static uint8_t  s_saved_col  = VGA_COL_NORMAL;
 
-void VGA_putchr(int x, int y, char c)
+/* ---- Helper: build a VGA cell word ---- */
+static inline uint16_t make_cell(char c, uint8_t color)
 {
-    g_ScreenBuffer[2 * (y * SCREEN_WIDTH + x)] = c;
+    return (uint16_t)((uint8_t)c) | ((uint16_t)color << 8);
 }
 
-void VGA_putcolor(int x, int y, uint8_t color)
+/* ---- Hardware cursor ---- */
+static void hw_cursor_update(void)
 {
-    g_ScreenBuffer[2 * (y * SCREEN_WIDTH + x) + 1] = color;
+    uint16_t pos = (uint16_t)(s_cursor_y * VGA_WIDTH + s_cursor_x);
+    i686_outb(VGA_CTRL_REG, 0x0F);
+    i686_outb(VGA_DATA_REG, (uint8_t)(pos & 0xFF));
+    i686_outb(VGA_CTRL_REG, 0x0E);
+    i686_outb(VGA_DATA_REG, (uint8_t)((pos >> 8) & 0xFF));
 }
 
-char VGA_getchr(int x, int y)
+void VGA_EnableCursor(uint8_t start_scanline, uint8_t end_scanline)
 {
-    return g_ScreenBuffer[2 * (y * SCREEN_WIDTH + x)];
+    i686_outb(VGA_CTRL_REG, 0x0A);
+    i686_outb(VGA_DATA_REG, (i686_inb(VGA_DATA_REG) & 0xC0) | start_scanline);
+    i686_outb(VGA_CTRL_REG, 0x0B);
+    i686_outb(VGA_DATA_REG, (i686_inb(VGA_DATA_REG) & 0xE0) | end_scanline);
 }
 
-uint8_t VGA_getcolor(int x, int y)
+void VGA_DisableCursor(void)
 {
-    return g_ScreenBuffer[2 * (y * SCREEN_WIDTH + x) + 1];
+    i686_outb(VGA_CTRL_REG, 0x0A);
+    i686_outb(VGA_DATA_REG, 0x20);
 }
 
-void VGA_setcursor(int x, int y)
+/* ---- Scroll ---- */
+void VGA_ScrollUp(int lines)
 {
-    int pos = y * SCREEN_WIDTH + x;
+    if (lines <= 0) return;
+    if (lines >= VGA_HEIGHT) { VGA_ClearScreen(); return; }
 
-    i686_outb(0x3D4, 0x0F);
-    i686_outb(0x3D5, (uint8_t)(pos & 0xFF));
-    i686_outb(0x3D4, 0x0E);
-    i686_outb(0x3D5, (uint8_t)((pos >> 8) & 0xFF));
+    for (int y = 0; y < VGA_HEIGHT - lines; y++)
+        for (int x = 0; x < VGA_WIDTH; x++)
+            VGA_MEMORY[y * VGA_WIDTH + x] =
+                VGA_MEMORY[(y + lines) * VGA_WIDTH + x];
+
+    for (int y = VGA_HEIGHT - lines; y < VGA_HEIGHT; y++)
+        for (int x = 0; x < VGA_WIDTH; x++)
+            VGA_MEMORY[y * VGA_WIDTH + x] = make_cell(' ', s_color);
 }
 
-void VGA_clrscr()
-{
-    for (int y = 0; y < SCREEN_HEIGHT; y++)
-        for (int x = 0; x < SCREEN_WIDTH; x++)
-        {
-            VGA_putchr(x, y, '\0');
-            VGA_putcolor(x, y, DEFAULT_COLOR);
-        }
+/* ---- Public API ---- */
 
-    g_ScreenX = 0;
-    g_ScreenY = 0;
-    VGA_setcursor(g_ScreenX, g_ScreenY);
+void VGA_Initialize(void)
+{
+    s_cursor_x  = 0;
+    s_cursor_y  = 0;
+    s_color     = VGA_COL_NORMAL;
+    VGA_EnableCursor(14, 15);
+    VGA_ClearScreen();
 }
 
-void VGA_scrollback(int lines)
+void VGA_ClearScreen(void)
 {
-    for (int y = lines; y < SCREEN_HEIGHT; y++)
-        for (int x = 0; x < SCREEN_WIDTH; x++)
-        {
-            VGA_putchr(x, y - lines, VGA_getchr(x, y));
-            VGA_putcolor(x, y - lines, VGA_getcolor(x, y));
-        }
-
-    for (int y = SCREEN_HEIGHT - lines; y < SCREEN_HEIGHT; y++)
-        for (int x = 0; x < SCREEN_WIDTH; x++)
-        {
-            VGA_putchr(x, y, '\0');
-            VGA_putcolor(x, y, DEFAULT_COLOR);
-        }
-
-    g_ScreenY -= lines;
+    uint16_t blank = make_cell(' ', s_color);
+    for (int i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++)
+        VGA_MEMORY[i] = blank;
+    s_cursor_x = 0;
+    s_cursor_y = 0;
+    hw_cursor_update();
 }
 
-void VGA_putc(char c)
+void VGA_SetColor(uint8_t color)
 {
-    switch (c)
-    {
+    s_color = color;
+}
+
+uint8_t VGA_GetColor(void)
+{
+    return s_color;
+}
+
+void VGA_SetCursorPos(int x, int y)
+{
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x >= VGA_WIDTH)  x = VGA_WIDTH  - 1;
+    if (y >= VGA_HEIGHT) y = VGA_HEIGHT - 1;
+    s_cursor_x = x;
+    s_cursor_y = y;
+    hw_cursor_update();
+}
+
+void VGA_GetCursorPos(int *x, int *y)
+{
+    if (x) *x = s_cursor_x;
+    if (y) *y = s_cursor_y;
+}
+
+void VGA_PutCharAt(char c, uint8_t color, int x, int y)
+{
+    if (x < 0 || x >= VGA_WIDTH || y < 0 || y >= VGA_HEIGHT) return;
+    VGA_MEMORY[y * VGA_WIDTH + x] = make_cell(c, color);
+}
+
+void VGA_PutChar(char c)
+{
+    switch (c) {
         case '\n':
-            g_ScreenX = 0;
-            g_ScreenY++;
-            break;
-    
-        case '\t':
-            for (int i = 0; i < 4 - (g_ScreenX % 4); i++)
-                VGA_putc(' ');
+            s_cursor_x = 0;
+            s_cursor_y++;
             break;
 
         case '\r':
-            g_ScreenX = 0;
+            s_cursor_x = 0;
+            break;
+
+        case '\t':
+            s_cursor_x = (s_cursor_x + 8) & ~7;
+            if (s_cursor_x >= VGA_WIDTH) {
+                s_cursor_x = 0;
+                s_cursor_y++;
+            }
+            break;
+
+        case '\b':
+            if (s_cursor_x > 0) {
+                s_cursor_x--;
+            } else if (s_cursor_y > 0) {
+                s_cursor_y--;
+                s_cursor_x = VGA_WIDTH - 1;
+            }
+            VGA_MEMORY[s_cursor_y * VGA_WIDTH + s_cursor_x] =
+                make_cell(' ', s_color);
             break;
 
         default:
-            VGA_putchr(g_ScreenX, g_ScreenY, c);
-            g_ScreenX++;
+            if (s_cursor_x >= VGA_WIDTH) {
+                s_cursor_x = 0;
+                s_cursor_y++;
+            }
+            if (c >= 0x20) { /* only printable */
+                VGA_MEMORY[s_cursor_y * VGA_WIDTH + s_cursor_x] =
+                    make_cell(c, s_color);
+                s_cursor_x++;
+            }
             break;
     }
 
-    if (g_ScreenX >= SCREEN_WIDTH)
-    {
-        g_ScreenY++;
-        g_ScreenX = 0;
+    /* Scroll if past bottom */
+    if (s_cursor_y >= VGA_HEIGHT) {
+        VGA_ScrollUp(1);
+        s_cursor_y = VGA_HEIGHT - 1;
+        s_cursor_x = 0;
     }
-    if (g_ScreenY >= SCREEN_HEIGHT)
-        VGA_scrollback(1);
 
-    VGA_setcursor(g_ScreenX, g_ScreenY);
+    hw_cursor_update();
+}
+
+void VGA_WriteString(const char *s)
+{
+    if (!s) return;
+    while (*s) VGA_PutChar(*s++);
+}
+
+void VGA_DrawHLine(char ch, int width, uint8_t color)
+{
+    uint8_t old = s_color;
+    s_color = color;
+    for (int i = 0; i < width; i++) VGA_PutChar(ch);
+    VGA_PutChar('\n');
+    s_color = old;
+}
+
+void VGA_SaveState(void)
+{
+    s_saved_x   = s_cursor_x;
+    s_saved_y   = s_cursor_y;
+    s_saved_col = s_color;
+}
+
+void VGA_RestoreState(void)
+{
+    s_cursor_x = s_saved_x;
+    s_cursor_y = s_saved_y;
+    s_color    = s_saved_col;
+    hw_cursor_update();
 }

@@ -1,10 +1,14 @@
-# tree.yml - GitHub Actions workflow to list repository structure
-name: List Repository Tree
+# .github/workflows/tree.yml
+name: 📁 List Repository Tree
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main, master]
+    inputs:
+      show_sizes:
+        description: 'Show file sizes'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   list-tree:
@@ -21,8 +25,19 @@ jobs:
       - name: Display full repository tree
         run: tree -a -I '.git' --charset=utf-8
 
-      - name: Display tree with file sizes
+      - name: Display tree with file sizes (if requested)
+        if: ${{ inputs.show_sizes == 'true' }}
         run: tree -a -s -I '.git' --charset=utf-8
 
       - name: List all files with paths
         run: find . -not -path './.git/*' -not -path './.git' | sort
+
+      - name: Count files and directories
+        run: |
+          echo "=== OmniOS Repository Stats ==="
+          echo "Total files: $(find . -not -path './.git/*' -type f | wc -l)"
+          echo "Total directories: $(find . -not -path './.git/*' -type d | wc -l)"
+          echo "Assembly files: $(find . -name '*.asm' | wc -l)"
+          echo "C files: $(find . -name '*.c' | wc -l)"
+          echo "C++ files: $(find . -name '*.cpp' | wc -l)"
+          echo "Header files: $(find . -name '*.h' -o -name '*.hpp' | wc -l)"

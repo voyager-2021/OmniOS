@@ -1,0 +1,113 @@
+# .github/workflows/build.yml
+name: 🔨 Build OmniOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
+      run_tests:
+        description: 'Run QEMU tests after build'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout OmniOS repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        id: cache-toolchain
+        with:
+          path: |
+            ~/cross
+            ~/.cache/pip
+          key: ${{ runner.os }}-toolchain-i686-elf-gcc-v1
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            nasm \
+            qemu-system-x86 \
+            python3 \
+            python3-pip \
+            scons \
+            mtools \
+            xorriso \
+            grub-pc-bin \
+            gcc \
+            g++ \
+            bison \
+            flex \
+            libgmp3-dev \
+            libmpc-dev \
+            libmpfr-dev \
+            texinfo \
+            wget \
+            curl \
+            git
+
+      - name: Install Python dependencies
+        run: pip3 install -r requirements.txt
+
+      - name: Build cross-compiler toolchain (if not cached)
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          chmod +x scripts/setup_toolchain.sh
+          bash scripts/setup_toolchain.sh
+        env:
+          PREFIX: $HOME/cross
+          TARGET: i686-elf
+
+      - name: Add toolchain to PATH
+        run: echo "$HOME/cross/bin" >> $GITHUB_PATH
+
+      - name: Verify toolchain
+        run: |
+          i686-elf-gcc --version
+          i686-elf-ld --version
+          nasm --version
+
+      - name: Build OmniOS
+        run: |
+          scons BUILD_TYPE=${{ inputs.build_type }}
+
+      - name: List build artifacts
+        run: |
+          echo "=== Build Output ==="
+          find build/ -type f | sort 2>/dev/null || echo "No build directory found"
+          ls -la *.img 2>/dev/null || echo "No disk images in root"
+
+      - name: Upload disk image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: omnios-disk-image-${{ inputs.build_type }}
+          path: |
+            **/*.img
+            **/*.iso
+          retention-days: 7
+
+      - name: Run QEMU headless test
+        if: ${{ inputs.run_tests == 'true' }}
+        run: |
+          timeout 10 qemu-system-i386 \
+            -drive format=raw,file=$(find . -name "*.img" | head -1) \
+            -display none \
+            -serial stdio \
+            -no-reboot || true
+        continue-on-error: true
