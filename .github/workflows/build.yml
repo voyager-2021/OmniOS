@@ -16,19 +16,37 @@ on:
         required: false
         default: false
         type: boolean
+      rebuild_toolchain:
+        description: 'Force rebuild cross-compiler toolchain'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      TOOLCHAIN_DIR: /home/runner/.toolchains
+      TOOLCHAIN_BIN: /home/runner/.toolchains/i686-elf/bin
+      BINUTILS_VERSION: '2.37'
+      GCC_VERSION: '11.2.0'
+      LIBGUESTFS_BACKEND: direct
+
     steps:
+      # ──────────────────────────────────────────────
+      #  1. Checkout
+      # ──────────────────────────────────────────────
       - name: Checkout OmniOS
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      # ──────────────────────────────────────────────
+      #  2. System + Python dependencies (single step)
+      # ──────────────────────────────────────────────
+      - name: Install all dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             build-essential \
             bison \
             flex \
@@ -41,93 +59,98 @@ jobs:
             qemu-system-x86 \
             python3-pip \
             wget \
-            curl \
-            git \
             xorriso \
             scons \
             libguestfs-tools \
             linux-image-generic
-
-      - name: Install Python dependencies
-        run: |
           pip3 install sh --break-system-packages
-
-      - name: Fix guestfs permissions
-        run: |
-          # libguestfs needs a kernel it can read
           sudo chmod +r /boot/vmlinuz-* || true
-          # Set LIBGUESTFS_BACKEND to direct so it works in CI
-          echo "LIBGUESTFS_BACKEND=direct" >> $GITHUB_ENV
-          # Test guestfs works
-          sudo -E guestfish --version || true
-          guestmount --version || true
 
+      # ──────────────────────────────────────────────
+      #  3. Toolchain cache (saves ~25 min on hits)
+      # ──────────────────────────────────────────────
       - name: Cache cross-compiler toolchain
         uses: actions/cache@v4
         id: cache-toolchain
+        if: ${{ inputs.rebuild_toolchain != 'true' }}
         with:
           path: ~/.toolchains
-          key: ${{ runner.os }}-i686-elf-gcc-11.2.0-binutils-2.37-v1
+          key: ${{ runner.os }}-i686-elf-binutils-${{ env.BINUTILS_VERSION }}-gcc-${{ env.GCC_VERSION }}-v2
 
-      - name: Create toolchains directory
-        run: mkdir -p ~/.toolchains
-
+      # ──────────────────────────────────────────────
+      #  4. Build toolchain only if not cached
+      # ──────────────────────────────────────────────
       - name: Build cross-compiler toolchain
-        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        if: steps.cache-toolchain.outputs.cache-hit != 'true' || inputs.rebuild_toolchain == 'true'
         run: |
+          mkdir -p $TOOLCHAIN_DIR
           chmod +x scripts/setup_toolchain.sh
-          BINUTILS_VERSION=2.37 GCC_VERSION=11.2.0 \
-            bash scripts/setup_toolchain.sh ~/.toolchains
+          BINUTILS_VERSION=${{ env.BINUTILS_VERSION }} \
+          GCC_VERSION=${{ env.GCC_VERSION }} \
+            bash scripts/setup_toolchain.sh $TOOLCHAIN_DIR
 
-      - name: Add toolchain to PATH
-        run: echo "$HOME/.toolchains/i686-elf/bin" >> $GITHUB_PATH
-
-      - name: Verify toolchain
+      # ──────────────────────────────────────────────
+      #  5. PATH + verify
+      # ──────────────────────────────────────────────
+      - name: Setup PATH and verify
         run: |
-          i686-elf-gcc --version
-          i686-elf-ld --version
+          echo "$TOOLCHAIN_BIN" >> $GITHUB_PATH
+          echo "=== Toolchain ==="
+          $TOOLCHAIN_BIN/i686-elf-gcc --version | head -1
+          echo "=== NASM ==="
           nasm --version
-          scons --version
+          echo "=== SCons ==="
+          scons --version | head -2
+          echo "=== guestmount ==="
+          guestmount --version || echo "guestmount check done"
 
+      # ──────────────────────────────────────────────
+      #  6. Build OmniOS
+      # ──────────────────────────────────────────────
       - name: Build OmniOS
         run: |
-          echo "=== Starting OmniOS build ==="
-          sudo -E scons -j$(nproc) \
-            config=${{ inputs.build_type }} \
-            toolchain=$HOME/.toolchains \
-            arch=i686 \
-            imageType=disk \
-            imageFS=fat32 \
-            imageSize=250m
-        env:
-          LIBGUESTFS_BACKEND: direct
-          PATH: /home/runner/.toolchains/i686-elf/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          sudo -E env "PATH=$TOOLCHAIN_BIN:$PATH" \
+            scons -j$(nproc) \
+              config=${{ inputs.build_type }} \
+              toolchain=$TOOLCHAIN_DIR \
+              arch=i686 \
+              imageType=disk \
+              imageFS=fat32 \
+              imageSize=250m
 
-      - name: List build artifacts
+      # ──────────────────────────────────────────────
+      #  7. Results
+      # ──────────────────────────────────────────────
+      - name: Build results
+        if: always()
         run: |
-          echo "=== Build directory ==="
-          find build/ -type f | sort 2>/dev/null || echo "No build dir"
+          echo "========================================"
+          echo "  OmniOS Build Results"
+          echo "========================================"
           echo ""
-          echo "=== Disk images ==="
-          find . -name "*.img" -o -name "*.iso" | grep -v '.git' | sort
+          echo "--- Disk Images ---"
+          find . -name "*.img" | grep -v '.git' | while read f; do
+            echo "  $(ls -lah "$f" | awk '{print $5, $9}')"
+          done
           echo ""
-          echo "=== ELF binaries ==="
-          find . -name "*.elf" | grep -v '.git' | sort
+          echo "--- Kernel ELF ---"
+          find . -name "*.elf" | grep -v '.git' | while read f; do
+            echo "  $(ls -lah "$f" | awk '{print $5, $9}')"
+          done
           echo ""
-          echo "=== Sizes ==="
-          find . \( -name "*.img" -o -name "*.iso" \) \
-            | grep -v '.git' \
-            | xargs ls -lah 2>/dev/null || echo "No images"
+          echo "--- All Build Artifacts ---"
+          find build/ -type f | sort 2>/dev/null | head -50 || echo "No build dir"
+          echo "========================================"
 
+      # ──────────────────────────────────────────────
+      #  8. QEMU test (optional)
+      # ──────────────────────────────────────────────
       - name: Run QEMU headless test
         if: ${{ inputs.run_tests == 'true' }}
         run: |
           IMG=$(find . -name "*.img" | grep -v '.git' | head -1)
-          if [ -z "$IMG" ]; then
-            echo "No disk image found"
-            exit 0
-          fi
-          echo "Testing: $IMG"
+          [ -z "$IMG" ] && echo "No image found" && exit 0
+          echo "Testing: $IMG ($(ls -lah "$IMG" | awk '{print $5}'))"
           timeout 10 qemu-system-i386 \
             -drive format=raw,file="$IMG" \
             -display none \
@@ -135,20 +158,16 @@ jobs:
             -no-reboot \
             -m 32M || true
 
-      - name: Upload disk image
+      # ──────────────────────────────────────────────
+      #  9. Upload artifacts
+      # ──────────────────────────────────────────────
+      - name: Upload OmniOS disk image
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: omnios-${{ inputs.build_type }}-image
+          name: omnios-${{ inputs.build_type }}
           path: |
-            **/*.img
-            **/*.iso
-          retention-days: 14
-          if-no-files-found: warn
-
-      - name: Upload kernel ELF
-        uses: actions/upload-artifact@v4
-        with:
-          name: omnios-${{ inputs.build_type }}-kernel
-          path: build/**/*.elf
-          retention-days: 14
+            build/**/*.img
+            build/**/*.elf
+          retention-days: 30
           if-no-files-found: warn
