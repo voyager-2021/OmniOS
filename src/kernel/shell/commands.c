@@ -90,25 +90,25 @@ static void cmd_help(ShellCmd *cl)
     (void)cl;
     typedef struct { const char *name; const char *desc; } E;
     static const E cmds[] = {
-        { "help",              "Show this help message"                      },
-        { "clear / cls",       "Clear the terminal screen"                   },
-        { "echo <text>",       "Print text to terminal"                      },
-        { "version",           "Show OmniOS version"                         },
-        { "sysinfo",           "Display system information"                  },
-        { "meminfo",           "Show memory layout"                          },
-        { "cpuinfo",           "Show CPU / arch information"                 },
-        { "history",           "List command history"                        },
-        { "color <0-7>",       "Change colour scheme"                        },
-        { "calc <expr>",       "Integer calculator (e.g. calc 10+3)"        },
-        { "ascii",             "Print ASCII table"                           },
-        { "hex <addr> [len]",  "Hex dump memory"                             },
-        { "peek <addr>",       "Read byte from address"                      },
-        { "poke <addr> <val>", "Write byte to address"                       },
-        { "uptime",            "Show tick counter"                           },
-        { "banner",            "Redraw boot banner"                          },
-        { "reboot",            "Reboot the system"                           },
-        { "halt",              "Halt the CPU"                                },
-        { "panic",             "Trigger kernel panic (test)"                 },
+        { "help",              "Show this help message"                   },
+        { "clear / cls",       "Clear the terminal screen"                },
+        { "echo <text>",       "Print text to terminal"                   },
+        { "version",           "Show OmniOS version"                      },
+        { "sysinfo",           "Display system information"               },
+        { "meminfo",           "Show memory layout"                       },
+        { "cpuinfo",           "Show CPU / arch information"              },
+        { "history",           "List command history"                     },
+        { "color <0-7>",       "Change colour scheme"                     },
+        { "calc <expr>",       "Integer calculator (e.g. calc 10+3)"     },
+        { "ascii",             "Print ASCII table"                        },
+        { "hex <addr> [len]",  "Hex dump memory"                          },
+        { "peek <addr>",       "Read byte from address"                   },
+        { "poke <addr> <val>", "Write byte to address"                    },
+        { "uptime",            "Show tick counter"                        },
+        { "banner",            "Redraw boot banner"                       },
+        { "reboot",            "Reboot the system"                        },
+        { "halt",              "Halt the CPU"                             },
+        { "panic",             "Trigger kernel panic (test)"              },
         { NULL, NULL }
     };
 
@@ -127,7 +127,11 @@ static void cmd_help(ShellCmd *cl)
     hr('-', VGA_WIDTH, VGA_COL_HEADER);
 }
 
-static void cmd_clear(ShellCmd *cl) { (void)cl; VGA_ClearScreen(); }
+static void cmd_clear(ShellCmd *cl)
+{
+    (void)cl;
+    VGA_ClearScreen();
+}
 
 static void cmd_echo(ShellCmd *cl)
 {
@@ -196,15 +200,14 @@ static void cmd_cpuinfo(ShellCmd *cl)
     hr('-', VGA_WIDTH, VGA_COL_HEADER);
 }
 
-/* History - uses externs from shell.c */
-extern int         s_hist_count;
-extern const char *history_get(int offset);
-
 static void cmd_history(ShellCmd *cl)
 {
     (void)cl;
     cprintln("  Command History:", VGA_COL_HEADER);
-    if (s_hist_count == 0) { cprintln("  (empty)", VGA_COL_WARNING); return; }
+    if (s_hist_count == 0) {
+        cprintln("  (empty)", VGA_COL_WARNING);
+        return;
+    }
     for (int i = s_hist_count; i >= 1; i--) {
         const char *h = history_get(i);
         if (!h) continue;
@@ -264,8 +267,8 @@ static void cmd_calc(ShellCmd *cl)
     expr[ep] = '\0';
 
     char *p = expr;
-    bool neg_a = false;
-    if (*p == '-') { neg_a = true; p++; }
+    bool neg_a = 0;
+    if (*p == '-') { neg_a = 1; p++; }
     else if (*p == '+') p++;
 
     int64_t a = 0;
@@ -280,8 +283,8 @@ static void cmd_calc(ShellCmd *cl)
         return;
     }
 
-    bool neg_b = false;
-    if (*p == '-') { neg_b = true; p++; }
+    bool neg_b = 0;
+    if (*p == '-') { neg_b = 1; p++; }
     else if (*p == '+') p++;
 
     int64_t b = 0;

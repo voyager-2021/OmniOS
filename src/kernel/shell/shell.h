@@ -19,6 +19,11 @@ typedef struct {
     char  tokens[SHELL_MAX_INPUT];
 } ShellCmd;
 
+/* ---- History API (implemented in shell.c, used by commands.c) ---- */
+extern int         s_hist_count;
+const char        *history_get(int offset);
+
+/* ---- Shell API ---- */
 void Shell_Run(void);
 void Shell_ParseLine(const char *input, ShellCmd *out);
 void Shell_PrintPrompt(void);

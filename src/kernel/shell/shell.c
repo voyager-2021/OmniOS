@@ -1,8 +1,6 @@
 /* ============================================================
    OmniOS - Shell Core
-   Provides: prompt, line editing (backspace, DEL, Home, End,
-             left/right cursor), command history (up/down),
-             tab-completion stub.
+   Line editor with cursor movement, history, backspace.
    ============================================================ */
 #include "shell.h"
 #include "commands.h"
@@ -27,57 +25,53 @@ static void sh_strcpy(char *d, const char *s)
 static void sh_memmove(char *dst, const char *src, int n)
 {
     if (dst < src) { for (int i = 0; i < n; i++) dst[i] = src[i]; }
-    else           { for (int i = n-1; i >= 0; i--) dst[i] = src[i]; }
+    else           { for (int i = n - 1; i >= 0; i--) dst[i] = src[i]; }
 }
 
 /* ---- History ---- */
-static char  s_history[SHELL_HISTORY_SIZE][SHELL_MAX_INPUT];
-static int   s_hist_count = 0;
-static int   s_hist_head  = 0; /* next write slot (circular) */
+/* NOT static - exported via shell.h extern declarations */
+static char s_history_buf[SHELL_HISTORY_SIZE][SHELL_MAX_INPUT];
+int         s_hist_count = 0;   /* extern in shell.h */
+static int  s_hist_head  = 0;
 
 static void history_push(const char *line)
 {
     if (!line || !line[0]) return;
-    /* Don't duplicate the last entry */
+
+    /* Don't duplicate last entry */
     if (s_hist_count > 0) {
         int last = (s_hist_head - 1 + SHELL_HISTORY_SIZE) % SHELL_HISTORY_SIZE;
-        bool same = true;
-        const char *a = s_history[last], *b = line;
+        const char *a = s_history_buf[last];
+        const char *b = line;
         while (*a && *b && *a == *b) { a++; b++; }
-        same = (*a == '\0' && *b == '\0');
-        if (same) return;
+        if (*a == '\0' && *b == '\0') return;
     }
-    sh_strcpy(s_history[s_hist_head], line);
+
+    sh_strcpy(s_history_buf[s_hist_head], line);
     s_hist_head = (s_hist_head + 1) % SHELL_HISTORY_SIZE;
     if (s_hist_count < SHELL_HISTORY_SIZE) s_hist_count++;
 }
 
-static const char *history_get(int offset) /* offset 1 = most recent */
+/* NOT static - exported via shell.h declaration */
+const char *history_get(int offset)
 {
-    if (offset < 1 || offset > s_hist_count) return NULL;
+    if (offset < 1 || offset > s_hist_count) return 0;
     int idx = (s_hist_head - offset + SHELL_HISTORY_SIZE * 2) % SHELL_HISTORY_SIZE;
-    return s_history[idx];
+    return s_history_buf[idx];
 }
 
-/* ---- Line editor state ---- */
+/* ---- Line editor ---- */
 typedef struct {
-    char buf[SHELL_MAX_INPUT];  /* current input buffer */
-    int  len;                   /* chars in buf         */
-    int  pos;                   /* cursor position      */
-    int  hist_offset;           /* 0 = live buffer      */
-    char saved[SHELL_MAX_INPUT];/* live buffer saved when browsing history */
+    char buf[SHELL_MAX_INPUT];
+    int  len;
+    int  pos;
+    int  hist_offset;
+    char saved[SHELL_MAX_INPUT];
 } LineState;
 
 static void line_clear_display(LineState *ls)
 {
-    /* Move cursor to start of prompt end, then erase to EOL using spaces */
-    /* We track position by reprinting */
-    int prompt_len = sh_strlen(SHELL_PROMPT);
-    (void)prompt_len;
-
-    /* Go back to right after the prompt */
     for (int i = 0; i < ls->pos; i++) VGA_PutChar('\b');
-    /* Erase everything after prompt */
     for (int i = 0; i < ls->len; i++) VGA_PutChar(' ');
     for (int i = 0; i < ls->len; i++) VGA_PutChar('\b');
 }
@@ -86,22 +80,18 @@ static void line_reprint(LineState *ls)
 {
     VGA_SetColor(VGA_COL_INPUT);
     for (int i = 0; i < ls->len; i++) VGA_PutChar(ls->buf[i]);
-    /* Move cursor back to position */
     for (int i = ls->len; i > ls->pos; i--) VGA_PutChar('\b');
 }
 
 static void line_insert(LineState *ls, char c)
 {
     if (ls->len >= SHELL_MAX_INPUT - 1) return;
-    /* Shift right */
     sh_memmove(ls->buf + ls->pos + 1, ls->buf + ls->pos, ls->len - ls->pos);
     ls->buf[ls->pos] = c;
     ls->len++;
     ls->buf[ls->len] = '\0';
-    /* Redisplay from cursor */
     VGA_SetColor(VGA_COL_INPUT);
     for (int i = ls->pos; i < ls->len; i++) VGA_PutChar(ls->buf[i]);
-    /* Move cursor back to after inserted char */
     for (int i = ls->len - 1; i > ls->pos; i--) VGA_PutChar('\b');
     ls->pos++;
 }
@@ -135,7 +125,6 @@ static void line_delete(LineState *ls)
 static void line_load_history(LineState *ls, int offset)
 {
     if (offset == 0) {
-        /* Restore live buffer */
         line_clear_display(ls);
         sh_strcpy(ls->buf, ls->saved);
         ls->len = sh_strlen(ls->buf);
@@ -146,7 +135,7 @@ static void line_load_history(LineState *ls, int offset)
     }
     const char *h = history_get(offset);
     if (!h) return;
-    if (ls->hist_offset == 0) sh_strcpy(ls->saved, ls->buf); /* save live */
+    if (ls->hist_offset == 0) sh_strcpy(ls->saved, ls->buf);
     line_clear_display(ls);
     sh_strcpy(ls->buf, h);
     ls->len = sh_strlen(ls->buf);
@@ -155,7 +144,8 @@ static void line_load_history(LineState *ls, int offset)
     line_reprint(ls);
 }
 
-/* ---- Public: Shell_ReadLine ---- */
+/* ---- Public API ---- */
+
 void Shell_ReadLine(char *outbuf, int maxlen)
 {
     LineState ls;
@@ -167,20 +157,20 @@ void Shell_ReadLine(char *outbuf, int maxlen)
 
     VGA_SetColor(VGA_COL_INPUT);
 
-    while (true) {
+    while (1) {
         char c = KB_GetChar();
 
         switch ((unsigned char)c) {
-            case '\n': case '\r':
+            case '\n': case '\r': {
                 ls.buf[ls.len] = '\0';
                 puts("\n");
-                /* copy to output */
                 int copy_len = ls.len < maxlen - 1 ? ls.len : maxlen - 1;
                 for (int i = 0; i < copy_len; i++) outbuf[i] = ls.buf[i];
                 outbuf[copy_len] = '\0';
                 return;
+            }
 
-            case '\b':      /* Backspace */
+            case '\b':
                 line_backspace(&ls);
                 break;
 
@@ -221,14 +211,13 @@ void Shell_ReadLine(char *outbuf, int maxlen)
                 break;
 
             default:
-                if ((unsigned char)c >= 0x20 && (unsigned char)c < 0x7F)
+                if ((unsigned char)c >= 0x20 && (unsigned char)c < 0x80)
                     line_insert(&ls, c);
                 break;
         }
     }
 }
 
-/* ---- Public: Shell_ParseLine ---- */
 void Shell_ParseLine(const char *input, ShellCmd *cl)
 {
     cl->argc = 0;
@@ -250,7 +239,6 @@ void Shell_ParseLine(const char *input, ShellCmd *cl)
     if (cl->argc > 0) sh_strcpy(cl->cmd, cl->argv[0]);
 }
 
-/* ---- Public: Shell_PrintPrompt ---- */
 void Shell_PrintPrompt(void)
 {
     VGA_SetColor(VGA_COL_PROMPT);
@@ -258,13 +246,12 @@ void Shell_PrintPrompt(void)
     VGA_SetColor(VGA_COL_INPUT);
 }
 
-/* ---- Public: Shell_Run ---- */
 void Shell_Run(void)
 {
     static char input[SHELL_MAX_INPUT];
     ShellCmd cl;
 
-    while (true) {
+    while (1) {
         Shell_PrintPrompt();
         Shell_ReadLine(input, SHELL_MAX_INPUT);
 
