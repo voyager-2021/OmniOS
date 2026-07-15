@@ -14,7 +14,7 @@ on:
       run_tests:
         description: 'Run QEMU headless test after build'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 jobs:
@@ -47,6 +47,12 @@ jobs:
             git \
             xorriso \
             scons
+
+      - name: Install Python modules
+        run: |
+          pip3 install sh --break-system-packages || \
+          pip3 install sh || \
+          sudo pip3 install sh
 
       - name: Cache cross-compiler toolchain
         uses: actions/cache@v4
