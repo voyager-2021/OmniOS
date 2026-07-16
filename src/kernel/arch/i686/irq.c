@@ -4,11 +4,11 @@
 #include "io.h"
 #include <stddef.h>
 #include <util/arrays.h>
-#include "stdio.h"
-#include <debug.h>
+#include "../../stdio.h"
+#include "../../debug.h"
 
 #define PIC_REMAP_OFFSET        0x20
-#define MODULE                  "PIC"
+#define MODULE                  "IRQ"
 
 IRQHandler g_IRQHandlers[16];
 static const PICDriver* g_Driver = NULL;
@@ -16,10 +16,9 @@ static const PICDriver* g_Driver = NULL;
 void i686_IRQ_Handler(Registers* regs)
 {
     int irq = regs->interrupt - PIC_REMAP_OFFSET;
-    
+
     if (g_IRQHandlers[irq] != NULL)
     {
-        // handle IRQ
         g_IRQHandlers[irq](regs);
     }
     else
@@ -27,7 +26,6 @@ void i686_IRQ_Handler(Registers* regs)
         log_warn(MODULE, "Unhandled IRQ %d...", irq);
     }
 
-    // send EOI
     g_Driver->SendEndOfInterrupt(irq);
 }
 
@@ -40,6 +38,7 @@ void i686_IRQ_Initialize()
     for (int i = 0; i < SIZE(drivers); i++) {
         if (drivers[i]->Probe()) {
             g_Driver = drivers[i];
+            break;
         }
     }
 
@@ -48,21 +47,22 @@ void i686_IRQ_Initialize()
         return;
     }
 
-    log_info(MODULE, "Found %s PIC.", g_Driver->Name);
+    log_info(MODULE, "Found %s.", g_Driver->Name);
     g_Driver->Initialize(PIC_REMAP_OFFSET, PIC_REMAP_OFFSET + 8, false);
 
-    // register ISR handlers for each of the 16 irq lines
     for (int i = 0; i < 16; i++)
         i686_ISR_RegisterHandler(PIC_REMAP_OFFSET + i, i686_IRQ_Handler);
 
-    // enable interrupts
     i686_EnableInterrupts();
-
-    // g_Driver->Unmask(0);
-    // g_Driver->Unmask(1);
 }
 
 void i686_IRQ_RegisterHandler(int irq, IRQHandler handler)
 {
     g_IRQHandlers[irq] = handler;
+
+    /* Automatically unmask the IRQ when a handler is registered */
+    if (g_Driver != NULL)
+    {
+        g_Driver->Unmask(irq);
+    }
 }
