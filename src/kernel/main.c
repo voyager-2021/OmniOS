@@ -1,5 +1,5 @@
 /* ============================================================
-   OmniOS - Kernel Entry Point
+   OmniOS v1.0.0 - Kernel Entry Point
    ============================================================ */
 #include <stdint.h>
 #include <stdbool.h>
@@ -17,8 +17,8 @@
 #include "stdio.h"
 #include "debug.h"
 
-#define OMNIOS_VERSION  "0.1.0"
-#define OMNIOS_BUILD    "2024.001"
+#define OMNIOS_VERSION  "1.0.0"
+#define OMNIOS_BUILD    "2025.001"
 
 /* ---- Global tick counter ---- */
 volatile uint32_t g_tick_count = 0;
@@ -29,7 +29,35 @@ static void timer_handler(Registers *regs)
     g_tick_count++;
 }
 
-/* ---- Boot status line ---- */
+/* ---- Delay using PIT ticks (~18.2 Hz) ---- */
+static void delay_ticks(uint32_t ticks)
+{
+    uint32_t start = g_tick_count;
+    while (g_tick_count - start < ticks) {
+        __asm__ volatile("hlt");
+    }
+}
+
+/* ---- Startup animation ---- */
+static void anim_progress_bar(const char *label, int width, uint8_t col)
+{
+    VGA_SetColor(VGA_COL_INFO);
+    puts("  ");
+    puts(label);
+    puts(" [");
+    VGA_SetColor(col);
+    for (int i = 0; i < width; i++) {
+        putc('#');
+        /* Small delay per block - about 1 tick per 2 blocks */
+        if (i % 2 == 0) delay_ticks(1);
+    }
+    VGA_SetColor(VGA_COL_INFO);
+    puts("] ");
+    VGA_SetColor(VGA_COL_SUCCESS);
+    puts("OK\n");
+    VGA_SetColor(VGA_COL_NORMAL);
+}
+
 static void boot_status(const char *msg, bool ok)
 {
     if (ok) {
@@ -42,47 +70,72 @@ static void boot_status(const char *msg, bool ok)
     VGA_SetColor(VGA_COL_NORMAL);
     puts(msg);
     puts("\n");
+    delay_ticks(1);
 }
 
-/* ---- Boot banner ---- */
-static void print_boot_banner(void)
+static void startup_animation(void)
 {
     VGA_ClearScreen();
 
-    VGA_DrawHLine('=', VGA_WIDTH, VGA_COL_HEADER);
-
+    /* ---- Phase 1: Logo reveal line by line ---- */
     VGA_SetColor(VGA_COL_HEADER);
-    puts("\n");
-    puts("    ..|'''.|                   .|'''.|  \n");
-    puts("   .|'     '    mm    nnnn     ||..  '  \n");
-    puts("   ||    ....  'MM'   nn ''Nn  ''|||.   \n");
-    puts("   '|.    ||  .M''M.  nn   MM  .   '||  \n");
-    puts("    ''|...'| .M'  'Mb.MM  .M'  |'...|'  \n");
-    puts("\n");
-    VGA_SetColor(VGA_COL_NORMAL);
 
-    VGA_SetColor(VGA_COL_INFO);
-    printf("    Terminal Operating System  v%s  |  Build %s\n\n",
-           OMNIOS_VERSION, OMNIOS_BUILD);
+    static const char *logo[] = {
+        "                                                                ",
+        "     ::::::::  :::   ::: ::::    ::: :::::::::  ::::::::  :::::",
+        "    :+:    :+: :+:  :+: :+:+:   :+:  :+:    :+::+:    :+::+:  ",
+        "    +:+    +:+ +:+  +:+ :+:+:+  +:+  +:+    +:++:+    +:++:+  ",
+        "    +#+    +:+ +#++:+++ +#+ +:+ +#+  +#+    +:++#+    +:++#++:",
+        "    +#+    +#+ +#+  +#+ +#+  +#+#+#  +#+    +#++#+    +#+    +#+",
+        "    #+#    #+# #+#  #+# #+#   #+#+#  #+#    #+##+#    #+#    #+#",
+        "     ########  ###  ### ###    ####  #########  ########  :::::",
+        "                                                                ",
+    };
+
+    for (int i = 0; i < 9; i++) {
+        puts(logo[i]);
+        puts("\n");
+        delay_ticks(1);
+    }
+
     VGA_SetColor(VGA_COL_NORMAL);
+    puts("\n");
+
+    /* ---- Phase 2: Version text ---- */
+    VGA_SetColor(VGA_COL_INFO);
+    printf("    OmniOS v%s  |  Build %s  |  x86 32-bit\n", OMNIOS_VERSION, OMNIOS_BUILD);
+    VGA_SetColor(VGA_COL_NORMAL);
+    puts("\n");
 
     VGA_DrawHLine('=', VGA_WIDTH, VGA_COL_HEADER);
     puts("\n");
 
-    boot_status("VGA text mode 80x25 initialised",    true);
-    boot_status("GDT loaded (null/code/data)",         true);
-    boot_status("IDT loaded (256 entries)",             true);
-    boot_status("PIC i8259 remapped (IRQ 0x20-0x2F)",  true);
-    boot_status("ISR handlers installed",               true);
-    boot_status("IRQ handlers installed",               true);
-    boot_status("PIT timer hooked (IRQ0)",              true);
-    boot_status("PS/2 keyboard driver active (IRQ1)",   true);
-    boot_status("OmniOS kernel shell ready",            true);
+    /* ---- Phase 3: Boot status messages ---- */
+    boot_status("Initialising VGA text mode 80x25",     true);
+    boot_status("Loading GDT (code/data segments)",      true);
+    boot_status("Loading IDT (256 interrupt gates)",      true);
+    boot_status("Configuring PIC i8259 (IRQ remap)",     true);
+    boot_status("Installing ISR handlers",                true);
+    boot_status("Installing IRQ handlers",                true);
+    boot_status("Hooking PIT timer (IRQ0, ~18.2 Hz)",   true);
+    boot_status("Starting PS/2 keyboard driver (IRQ1)", true);
 
     puts("\n");
+
+    /* ---- Phase 4: Loading progress bar ---- */
+    anim_progress_bar("Loading kernel modules", 40, VGA_COL_SUCCESS);
+    anim_progress_bar("Initialising shell    ", 40, VGA_MAKE_COLOR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+
+    puts("\n");
+
+    /* ---- Phase 5: Ready message ---- */
     VGA_DrawHLine('-', VGA_WIDTH, VGA_COL_INFO);
+    VGA_SetColor(VGA_COL_SUCCESS);
+    puts("  OmniOS v");
+    puts(OMNIOS_VERSION);
+    puts(" booted successfully!\n");
     VGA_SetColor(VGA_COL_INFO);
-    puts("  Type 'help' for commands.  Type 'banner' to redraw this screen.\n");
+    puts("  Type 'help' for commands.  Type 'packages' to see available packages.\n");
     VGA_DrawHLine('-', VGA_WIDTH, VGA_COL_INFO);
     puts("\n");
     VGA_SetColor(VGA_COL_NORMAL);
@@ -95,12 +148,11 @@ void kernel_main(void)
     VGA_Initialize();
 
     i686_IRQ_RegisterHandler(0, timer_handler);
-
     KB_Initialize();
 
     __asm__ volatile("sti");
 
-    print_boot_banner();
+    startup_animation();
 
     Shell_Run();
 

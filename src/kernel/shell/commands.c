@@ -1,23 +1,20 @@
 /* ============================================================
-   OmniOS - Command Implementations
+   OmniOS v1.0.0 - Command Implementations
    ============================================================ */
 #include "commands.h"
 #include "shell.h"
 #include "../stdio.h"
 #include "../arch/i686/vga_text.h"
 #include "../arch/i686/io.h"
+#include "../drivers/keyboard.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-
-#define OMNIOS_VERSION  "0.1.0"
-#define OMNIOS_BUILD    "2024.001"
 
 #define COLOR_SET(c)   VGA_SetColor(c)
 #define COLOR_RESET()  VGA_SetColor(VGA_COL_NORMAL)
 
 /* ---- Helpers ---- */
-
 static void cprint(const char *s, uint8_t col)
 {
     COLOR_SET(col); puts(s); COLOR_RESET();
@@ -83,7 +80,9 @@ static uintptr_t parse_addr(const char *s)
     return addr;
 }
 
-/* ---- Commands ---- */
+/* ============================================================
+   Commands
+   ============================================================ */
 
 static void cmd_help(ShellCmd *cl)
 {
@@ -105,15 +104,22 @@ static void cmd_help(ShellCmd *cl)
         { "peek <addr>",       "Read byte from address"                   },
         { "poke <addr> <val>", "Write byte to address"                    },
         { "uptime",            "Show tick counter"                        },
+        { "date",              "Show system date/time (from ticks)"       },
+        { "whoami",            "Show current user"                        },
+        { "hostname",          "Show/set hostname"                        },
         { "banner",            "Redraw boot banner"                       },
+        { "packages",          "List available packages"                  },
+        { "install <pkg>",     "Install a package"                        },
+        { "uninstall <pkg>",   "Uninstall a package"                      },
+        { "run <pkg> [args]",  "Run an installed package"                 },
         { "reboot",            "Reboot the system"                        },
-        { "halt",              "Halt the CPU"                             },
+        { "halt / shutdown",   "Halt the CPU"                             },
         { "panic",             "Trigger kernel panic (test)"              },
         { NULL, NULL }
     };
 
     hr('=', VGA_WIDTH, VGA_COL_HEADER);
-    cprintln("   OmniOS Command Reference", VGA_COL_HEADER);
+    cprintln("   OmniOS v" OMNIOS_VERSION " Command Reference", VGA_COL_HEADER);
     hr('=', VGA_WIDTH, VGA_COL_HEADER);
 
     for (int i = 0; cmds[i].name; i++) {
@@ -124,14 +130,13 @@ static void cmd_help(ShellCmd *cl)
         COLOR_RESET();
         puts(cmds[i].desc); putc('\n');
     }
+
+    hr('-', VGA_WIDTH, VGA_COL_HEADER);
+    cprintln("  Installed packages also work as commands.", VGA_COL_INFO);
     hr('-', VGA_WIDTH, VGA_COL_HEADER);
 }
 
-static void cmd_clear(ShellCmd *cl)
-{
-    (void)cl;
-    VGA_ClearScreen();
-}
+static void cmd_clear(ShellCmd *cl) { (void)cl; VGA_ClearScreen(); }
 
 static void cmd_echo(ShellCmd *cl)
 {
@@ -167,6 +172,15 @@ static void cmd_sysinfo(ShellCmd *cl)
     kv_row("Display",       "VGA Text 80x25 @ 0xB8000",   16);
     kv_row("Keyboard",      "PS/2 IRQ1 ring buffer",       16);
     kv_row("Build System",  "SCons + i686-elf-gcc",        16);
+
+    /* Show installed packages count */
+    int installed = 0;
+    for (int i = 0; i < g_package_count; i++)
+        if (g_packages[i].installed) installed++;
+    COLOR_SET(VGA_COL_INFO);
+    printf("  Packages        : %d/%d installed\n", installed, g_package_count);
+    COLOR_RESET();
+
     hr('-', VGA_WIDTH, VGA_COL_HEADER);
 }
 
@@ -399,10 +413,55 @@ extern volatile uint32_t g_tick_count;
 static void cmd_uptime(ShellCmd *cl)
 {
     (void)cl;
+    uint32_t ticks = g_tick_count;
+    uint32_t secs = ticks / 18;
+    uint32_t mins = secs / 60;
+    uint32_t hrs = mins / 60;
     COLOR_SET(VGA_COL_INFO);
-    printf("  System ticks : %u\n", g_tick_count);
-    printf("  Approx uptime: %u seconds\n", g_tick_count / 18);
+    printf("  Uptime: %02u:%02u:%02u  (%u ticks)\n", hrs, mins % 60, secs % 60, ticks);
     COLOR_RESET();
+}
+
+static void cmd_date(ShellCmd *cl)
+{
+    (void)cl;
+    uint32_t secs = g_tick_count / 18;
+    uint32_t mins = secs / 60;
+    uint32_t hrs = mins / 60;
+    COLOR_SET(VGA_COL_INFO);
+    printf("  System time: %02u:%02u:%02u (since boot)\n", hrs, mins % 60, secs % 60);
+    COLOR_RESET();
+    cprintln("  Note: No RTC driver. Time is relative to boot.", VGA_COL_WARNING);
+}
+
+static char g_hostname[32] = "omnios";
+
+static void cmd_whoami(ShellCmd *cl)
+{
+    (void)cl;
+    COLOR_SET(VGA_COL_SUCCESS);
+    puts("  root@");
+    puts(g_hostname);
+    puts("\n");
+    COLOR_RESET();
+}
+
+static void cmd_hostname(ShellCmd *cl)
+{
+    if (cl->argc >= 2) {
+        /* Set hostname */
+        int i = 0;
+        const char *s = cl->argv[1];
+        while (*s && i < 30) g_hostname[i++] = *s++;
+        g_hostname[i] = '\0';
+        COLOR_SET(VGA_COL_SUCCESS);
+        printf("  Hostname set to: %s\n", g_hostname);
+        COLOR_RESET();
+    } else {
+        COLOR_SET(VGA_COL_INFO);
+        printf("  Hostname: %s\n", g_hostname);
+        COLOR_RESET();
+    }
 }
 
 static void cmd_banner(ShellCmd *cl)
@@ -412,11 +471,11 @@ static void cmd_banner(ShellCmd *cl)
     hr('*', VGA_WIDTH, VGA_COL_HEADER);
     COLOR_SET(VGA_COL_HEADER);
     puts("\n");
-    puts("    ..|'''.|                   .|'''.|  \n");
-    puts("   .|'     '    mm    nnnn     ||..  '  \n");
-    puts("   ||    ....  'MM'   nn ''Nn  ''|||.   \n");
-    puts("   '|.    ||  .M''M.  nn   MM  .   '||  \n");
-    puts("    ''|...'| .M'  'Mb.MM  .M'  |'...|'  \n");
+    puts("     ::::::::  :::   ::: ::::    ::: :::::::::  ::::::::  :::::\n");
+    puts("    :+:    :+: :+:  :+: :+:+:   :+:  :+:    :+::+:    :+::+:  \n");
+    puts("    +#+    +:+ +#++:+++ +#+ +:+ +#+  +#+    +:++#+    +:++#++:\n");
+    puts("    #+#    #+# #+#  #+# #+#   #+#+#  #+#    #+##+#    #+#    #+#\n");
+    puts("     ########  ###  ### ###    ####  #########  ########  :::::\n");
     puts("\n");
     COLOR_RESET();
     COLOR_SET(VGA_COL_INFO);
@@ -425,6 +484,142 @@ static void cmd_banner(ShellCmd *cl)
     puts("\n");
     hr('*', VGA_WIDTH, VGA_COL_HEADER);
     cprintln("  Type 'help' for commands.", VGA_COL_INFO);
+}
+
+/* ---- Package commands ---- */
+
+static void cmd_packages(ShellCmd *cl)
+{
+    (void)cl;
+    hr('=', VGA_WIDTH, VGA_COL_HEADER);
+    cprintln("   OmniOS Package Manager", VGA_COL_HEADER);
+    hr('=', VGA_WIDTH, VGA_COL_HEADER);
+
+    if (g_package_count == 0) {
+        cprintln("  No packages available.", VGA_COL_WARNING);
+        return;
+    }
+
+    COLOR_SET(VGA_COL_INFO);
+    printf("  %-16s %-8s %-10s %s\n", "PACKAGE", "VER", "STATUS", "DESCRIPTION");
+    COLOR_RESET();
+    hr('-', VGA_WIDTH, VGA_COL_NORMAL);
+
+    for (int i = 0; i < g_package_count; i++) {
+        Package *p = &g_packages[i];
+        if (p->installed) {
+            COLOR_SET(VGA_COL_SUCCESS);
+            printf("  %-16s %-8s ", p->name, p->version);
+            cprint("[installed]", VGA_COL_SUCCESS);
+        } else {
+            COLOR_SET(VGA_COL_NORMAL);
+            printf("  %-16s %-8s ", p->name, p->version);
+            cprint("[  ready  ]", VGA_COL_WARNING);
+        }
+        COLOR_SET(VGA_COL_NORMAL);
+        printf(" %s\n", p->description);
+    }
+
+    hr('-', VGA_WIDTH, VGA_COL_NORMAL);
+    cprintln("  Use: install <name>  |  uninstall <name>  |  <name> [args]", VGA_COL_INFO);
+}
+
+static void cmd_install(ShellCmd *cl)
+{
+    if (cl->argc < 2) {
+        cprintln("  Usage: install <package>", VGA_COL_WARNING);
+        cprintln("  Run 'packages' to see available packages.", VGA_COL_INFO);
+        return;
+    }
+
+    const char *name = cl->argv[1];
+
+    if (cmd_strcmp(name, "all") == 0) {
+        /* Install all packages */
+        int count = 0;
+        for (int i = 0; i < g_package_count; i++) {
+            if (!g_packages[i].installed) {
+                g_packages[i].installed = true;
+                COLOR_SET(VGA_COL_SUCCESS);
+                printf("  Installed: %s v%s\n", g_packages[i].name, g_packages[i].version);
+                COLOR_RESET();
+                count++;
+            }
+        }
+        if (count == 0) cprintln("  All packages already installed.", VGA_COL_INFO);
+        else {
+            COLOR_SET(VGA_COL_SUCCESS);
+            printf("  %d package(s) installed.\n", count);
+            COLOR_RESET();
+        }
+        return;
+    }
+
+    int idx = PKG_Find(name);
+    if (idx < 0) {
+        COLOR_SET(VGA_COL_ERROR);
+        printf("  Package '%s' not found.\n", name);
+        COLOR_RESET();
+        cprintln("  Run 'packages' to see available packages.", VGA_COL_INFO);
+        return;
+    }
+
+    if (g_packages[idx].installed) {
+        COLOR_SET(VGA_COL_WARNING);
+        printf("  Package '%s' is already installed.\n", name);
+        COLOR_RESET();
+        return;
+    }
+
+    PKG_Install(name);
+    COLOR_SET(VGA_COL_SUCCESS);
+    printf("  Successfully installed: %s v%s\n", g_packages[idx].name, g_packages[idx].version);
+    printf("  Run with: %s\n", g_packages[idx].name);
+    COLOR_RESET();
+}
+
+static void cmd_uninstall(ShellCmd *cl)
+{
+    if (cl->argc < 2) {
+        cprintln("  Usage: uninstall <package>", VGA_COL_WARNING);
+        return;
+    }
+
+    const char *name = cl->argv[1];
+
+    if (cmd_strcmp(name, "all") == 0) {
+        int count = 0;
+        for (int i = 0; i < g_package_count; i++) {
+            if (g_packages[i].installed) {
+                g_packages[i].installed = false;
+                count++;
+            }
+        }
+        COLOR_SET(VGA_COL_SUCCESS);
+        printf("  %d package(s) uninstalled.\n", count);
+        COLOR_RESET();
+        return;
+    }
+
+    int idx = PKG_Find(name);
+    if (idx < 0) {
+        COLOR_SET(VGA_COL_ERROR);
+        printf("  Package '%s' not found.\n", name);
+        COLOR_RESET();
+        return;
+    }
+
+    if (!g_packages[idx].installed) {
+        COLOR_SET(VGA_COL_WARNING);
+        printf("  Package '%s' is not installed.\n", name);
+        COLOR_RESET();
+        return;
+    }
+
+    PKG_Uninstall(name);
+    COLOR_SET(VGA_COL_SUCCESS);
+    printf("  Uninstalled: %s\n", name);
+    COLOR_RESET();
 }
 
 static void cmd_reboot(ShellCmd *cl)
@@ -459,7 +654,9 @@ static void cmd_panic(ShellCmd *cl)
     while (1) __asm__ volatile("hlt");
 }
 
-/* ---- Dispatch table ---- */
+/* ============================================================
+   Dispatch table
+   ============================================================ */
 
 typedef struct {
     const char *name;
@@ -467,37 +664,48 @@ typedef struct {
 } CmdEntry;
 
 static const CmdEntry s_dispatch[] = {
-    { "help",    cmd_help    },
-    { "?",       cmd_help    },
-    { "clear",   cmd_clear   },
-    { "cls",     cmd_clear   },
-    { "echo",    cmd_echo    },
-    { "version", cmd_version },
-    { "ver",     cmd_version },
-    { "sysinfo", cmd_sysinfo },
-    { "meminfo", cmd_meminfo },
-    { "cpuinfo", cmd_cpuinfo },
-    { "history", cmd_history },
-    { "hist",    cmd_history },
-    { "color",   cmd_color   },
-    { "colour",  cmd_color   },
-    { "calc",    cmd_calc    },
-    { "ascii",   cmd_ascii   },
-    { "hex",     cmd_hex     },
-    { "peek",    cmd_peek    },
-    { "poke",    cmd_poke    },
-    { "uptime",  cmd_uptime  },
-    { "banner",  cmd_banner  },
-    { "reboot",  cmd_reboot  },
-    { "halt",    cmd_halt    },
-    { "panic",   cmd_panic   },
-    { NULL,      NULL        }
+    { "help",      cmd_help      },
+    { "?",         cmd_help      },
+    { "clear",     cmd_clear     },
+    { "cls",       cmd_clear     },
+    { "echo",      cmd_echo      },
+    { "version",   cmd_version   },
+    { "ver",       cmd_version   },
+    { "sysinfo",   cmd_sysinfo   },
+    { "meminfo",   cmd_meminfo   },
+    { "cpuinfo",   cmd_cpuinfo   },
+    { "history",   cmd_history   },
+    { "hist",      cmd_history   },
+    { "color",     cmd_color     },
+    { "colour",    cmd_color     },
+    { "calc",      cmd_calc      },
+    { "ascii",     cmd_ascii     },
+    { "hex",       cmd_hex       },
+    { "peek",      cmd_peek      },
+    { "poke",      cmd_poke      },
+    { "uptime",    cmd_uptime    },
+    { "date",      cmd_date      },
+    { "time",      cmd_date      },
+    { "whoami",    cmd_whoami    },
+    { "hostname",  cmd_hostname  },
+    { "banner",    cmd_banner    },
+    { "packages",  cmd_packages  },
+    { "pkg",       cmd_packages  },
+    { "install",   cmd_install   },
+    { "uninstall", cmd_uninstall },
+    { "remove",    cmd_uninstall },
+    { "reboot",    cmd_reboot    },
+    { "halt",      cmd_halt      },
+    { "shutdown",  cmd_halt      },
+    { "panic",     cmd_panic     },
+    { NULL,        NULL          }
 };
 
 void Commands_Dispatch(ShellCmd *cl)
 {
     if (!cl || !cl->cmd[0]) return;
 
+    /* Check built-in commands first */
     for (int i = 0; s_dispatch[i].name; i++) {
         if (cmd_strcmp(cl->cmd, s_dispatch[i].name) == 0) {
             s_dispatch[i].fn(cl);
@@ -505,6 +713,22 @@ void Commands_Dispatch(ShellCmd *cl)
         }
     }
 
+    /* Check if it's an installed package name */
+    if (PKG_Run(cl->cmd, cl)) return;
+
+    /* Check if it's an uninstalled package */
+    int pkg_idx = PKG_Find(cl->cmd);
+    if (pkg_idx >= 0) {
+        COLOR_SET(VGA_COL_WARNING);
+        printf("  Package '%s' is not installed.\n", cl->cmd);
+        COLOR_RESET();
+        COLOR_SET(VGA_COL_INFO);
+        printf("  Install it with: install %s\n", cl->cmd);
+        COLOR_RESET();
+        return;
+    }
+
+    /* Unknown */
     COLOR_SET(VGA_COL_ERROR);
     printf("  Unknown command: '%s'\n", cl->cmd);
     COLOR_RESET();

@@ -14,22 +14,22 @@ on:
       prerelease:
         description: 'Mark as pre-release'
         required: false
-        default: 'true'
+        default: true
         type: boolean
       create_qcow2:
         description: 'Include QCOW2 image'
         required: false
-        default: 'true'
+        default: true
         type: boolean
       create_vdi:
         description: 'Include VDI image (VirtualBox)'
         required: false
-        default: 'false'
+        default: false
         type: boolean
       create_vmdk:
         description: 'Include VMDK image (VMware)'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 permissions:

@@ -1,8 +1,8 @@
 #pragma once
-#include "shell.h"
 
 /* ============================================================
-   OmniOS v1.0.0 - Command Dispatcher
+   OmniOS v1.0.0 - Package Manager Header
+   Included by packages.c, referenced from shell.h
    ============================================================ */
 
-void Commands_Dispatch(ShellCmd *cl);
+/* All declarations are in shell.h */
