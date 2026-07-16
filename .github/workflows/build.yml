@@ -21,6 +21,11 @@ on:
         required: false
         default: false
         type: boolean
+      create_qcow2:
+        description: 'Create QCOW2 disk image for QEMU'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   build:
@@ -41,7 +46,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ──────────────────────────────────────────────
-      #  2. System + Python dependencies (single step)
+      #  2. System + Python dependencies
       # ──────────────────────────────────────────────
       - name: Install all dependencies
         run: |
@@ -57,6 +62,7 @@ jobs:
             nasm \
             mtools \
             qemu-system-x86 \
+            qemu-utils \
             python3-pip \
             wget \
             xorriso \
@@ -67,7 +73,7 @@ jobs:
           sudo chmod +r /boot/vmlinuz-* || true
 
       # ──────────────────────────────────────────────
-      #  3. Toolchain cache (saves ~25 min on hits)
+      #  3. Toolchain cache
       # ──────────────────────────────────────────────
       - name: Cache cross-compiler toolchain
         uses: actions/cache@v4
@@ -101,8 +107,10 @@ jobs:
           nasm --version
           echo "=== SCons ==="
           scons --version | head -2
-          echo "=== guestmount ==="
-          guestmount --version || echo "guestmount check done"
+          echo "=== QEMU ==="
+          qemu-system-i386 --version | head -1
+          echo "=== qemu-img ==="
+          qemu-img --version | head -1
 
       # ──────────────────────────────────────────────
       #  6. Build OmniOS
@@ -119,31 +127,149 @@ jobs:
               imageSize=250m
 
       # ──────────────────────────────────────────────
-      #  7. Results
+      #  7. Create QCOW2 image (optional)
+      # ──────────────────────────────────────────────
+      - name: Create QCOW2 disk image
+        if: ${{ inputs.create_qcow2 == 'true' }}
+        run: |
+          RAW_IMG=$(find build/ -name "*.img" | head -1)
+          if [ -z "$RAW_IMG" ]; then
+            echo "No raw image found, skipping QCOW2 creation"
+            exit 0
+          fi
+
+          QCOW2_IMG="${RAW_IMG%.img}.qcow2"
+          echo "=== Converting $RAW_IMG -> $QCOW2_IMG ==="
+
+          qemu-img convert -f raw -O qcow2 "$RAW_IMG" "$QCOW2_IMG"
+          qemu-img info "$QCOW2_IMG"
+
+          echo ""
+          echo "=== Image sizes ==="
+          ls -lah "$RAW_IMG"
+          ls -lah "$QCOW2_IMG"
+
+          # Generate QEMU run instructions
+          cat > build/QEMU_INSTRUCTIONS.txt << 'INSTRUCTIONS'
+          ╔══════════════════════════════════════════════════════════════╗
+          ║                  OmniOS - QEMU Instructions                ║
+          ╚══════════════════════════════════════════════════════════════╝
+
+          ── Using the RAW image (.img) ──────────────────────────────────
+
+            qemu-system-i386 \
+              -drive format=raw,file=image.img \
+              -m 256M \
+              -display sdl
+
+          ── Using the QCOW2 image (.qcow2) ─────────────────────────────
+
+            qemu-system-i386 \
+              -drive format=qcow2,file=image.qcow2 \
+              -m 256M \
+              -display sdl
+
+          ── With serial console output ──────────────────────────────────
+
+            qemu-system-i386 \
+              -drive format=raw,file=image.img \
+              -m 256M \
+              -serial stdio \
+              -display sdl
+
+          ── Headless mode (serial only, no window) ──────────────────────
+
+            qemu-system-i386 \
+              -drive format=raw,file=image.img \
+              -m 256M \
+              -serial stdio \
+              -display none
+
+          ── With debug (GDB) ────────────────────────────────────────────
+
+            qemu-system-i386 \
+              -drive format=raw,file=image.img \
+              -m 256M \
+              -display sdl \
+              -s -S
+
+            Then in another terminal:
+              gdb build/i686_debug/kernel/kernel.elf
+              (gdb) target remote :1234
+              (gdb) continue
+
+          ── With networking (user mode) ─────────────────────────────────
+
+            qemu-system-i386 \
+              -drive format=raw,file=image.img \
+              -m 256M \
+              -display sdl \
+              -netdev user,id=net0 \
+              -device e1000,netdev=net0
+
+          ── QCOW2 Advantages ───────────────────────────────────────────
+
+            - Smaller file size (only stores used blocks)
+            - Supports snapshots:
+                qemu-img snapshot -c "clean_boot" image.qcow2
+                qemu-img snapshot -a "clean_boot" image.qcow2
+            - Supports backing files for overlays:
+                qemu-img create -f qcow2 -b image.qcow2 overlay.qcow2
+            - Can grow dynamically
+
+          ── Convert between formats ─────────────────────────────────────
+
+            RAW to QCOW2:
+              qemu-img convert -f raw -O qcow2 image.img image.qcow2
+
+            QCOW2 to RAW:
+              qemu-img convert -f qcow2 -O raw image.qcow2 image.img
+
+            QCOW2 to VDI (VirtualBox):
+              qemu-img convert -f qcow2 -O vdi image.qcow2 image.vdi
+
+            QCOW2 to VMDK (VMware):
+              qemu-img convert -f qcow2 -O vmdk image.qcow2 image.vmdk
+
+          ── System Requirements ─────────────────────────────────────────
+
+            - QEMU 4.0+ recommended
+            - Install:
+                Ubuntu/Debian:  sudo apt install qemu-system-x86
+                Fedora:         sudo dnf install qemu-system-x86
+                Arch:           sudo pacman -S qemu-system-x86
+                macOS:          brew install qemu
+                Windows:        Download from https://qemu.org/download
+
+          INSTRUCTIONS
+
+          echo "=== QCOW2 image and instructions created ==="
+
+      # ──────────────────────────────────────────────
+      #  8. Build results
       # ──────────────────────────────────────────────
       - name: Build results
         if: always()
         run: |
-          echo "========================================"
-          echo "  OmniOS Build Results"
-          echo "========================================"
+          echo "╔══════════════════════════════════════════╗"
+          echo "║       OmniOS Build Results               ║"
+          echo "╚══════════════════════════════════════════╝"
           echo ""
-          echo "--- Disk Images ---"
-          find . -name "*.img" | grep -v '.git' | while read f; do
+          echo "── Disk Images ──"
+          find . \( -name "*.img" -o -name "*.qcow2" \) | grep -v '.git' | while read f; do
             echo "  $(ls -lah "$f" | awk '{print $5, $9}')"
           done
           echo ""
-          echo "--- Kernel ELF ---"
+          echo "── Kernel ELF ──"
           find . -name "*.elf" | grep -v '.git' | while read f; do
             echo "  $(ls -lah "$f" | awk '{print $5, $9}')"
           done
           echo ""
-          echo "--- All Build Artifacts ---"
+          echo "── All Build Artifacts ──"
           find build/ -type f | sort 2>/dev/null | head -50 || echo "No build dir"
-          echo "========================================"
 
       # ──────────────────────────────────────────────
-      #  8. QEMU test (optional)
+      #  9. QEMU test (optional)
       # ──────────────────────────────────────────────
       - name: Run QEMU headless test
         if: ${{ inputs.run_tests == 'true' }}
@@ -156,18 +282,30 @@ jobs:
             -display none \
             -serial stdio \
             -no-reboot \
-            -m 32M || true
+            -m 256M || true
 
       # ──────────────────────────────────────────────
-      #  9. Upload artifacts
+      #  10. Upload artifacts
       # ──────────────────────────────────────────────
-      - name: Upload OmniOS disk image
+      - name: Upload OmniOS RAW image
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: omnios-${{ inputs.build_type }}
+          name: omnios-${{ inputs.build_type }}-raw
           path: |
             build/**/*.img
             build/**/*.elf
+            build/**/QEMU_INSTRUCTIONS.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload OmniOS QCOW2 image
+        if: success() && inputs.create_qcow2 == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: omnios-${{ inputs.build_type }}-qcow2
+          path: |
+            build/**/*.qcow2
+            build/**/QEMU_INSTRUCTIONS.txt
           retention-days: 30
           if-no-files-found: warn
