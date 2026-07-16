@@ -14,23 +14,26 @@ on:
       prerelease:
         description: 'Mark as pre-release'
         required: false
-        default: true
+        default: 'true'
         type: boolean
       create_qcow2:
         description: 'Include QCOW2 image'
         required: false
-        default: true
+        default: 'true'
         type: boolean
       create_vdi:
         description: 'Include VDI image (VirtualBox)'
         required: false
-        default: false
+        default: 'false'
         type: boolean
       create_vmdk:
         description: 'Include VMDK image (VMware)'
         required: false
-        default: false
+        default: 'false'
         type: boolean
+
+permissions:
+  contents: write
 
 jobs:
   release:
@@ -120,53 +123,49 @@ jobs:
       - name: Prepare release directory
         run: |
           mkdir -p release
+          VER="${{ inputs.version }}"
 
-          # Find built files
           RAW_IMG=$(find build/ -name "*.img" | head -1)
           KERNEL_ELF=$(find build/ -name "kernel.elf" | head -1)
-          KERNEL_STRIPPED=$(find build/ -name "kernel-stripped.elf" | head -1)
 
           if [ -z "$RAW_IMG" ]; then
             echo "ERROR: No disk image found!"
             exit 1
           fi
 
-          # Copy raw image
-          cp "$RAW_IMG" "release/omnios-${{ inputs.version }}.img"
-          echo "Created: omnios-${{ inputs.version }}.img"
+          cp "$RAW_IMG" "release/omnios-${VER}.img"
 
-          # Copy kernel ELF (for debugging)
           if [ -n "$KERNEL_ELF" ]; then
-            cp "$KERNEL_ELF" "release/omnios-${{ inputs.version }}-kernel.elf"
+            cp "$KERNEL_ELF" "release/omnios-${VER}-kernel.elf"
           fi
 
       - name: Create QCOW2 image
         if: ${{ inputs.create_qcow2 == 'true' }}
         run: |
+          VER="${{ inputs.version }}"
           qemu-img convert -f raw -O qcow2 \
-            "release/omnios-${{ inputs.version }}.img" \
-            "release/omnios-${{ inputs.version }}.qcow2"
-          echo "Created: omnios-${{ inputs.version }}.qcow2"
-          qemu-img info "release/omnios-${{ inputs.version }}.qcow2"
+            "release/omnios-${VER}.img" \
+            "release/omnios-${VER}.qcow2"
+          qemu-img info "release/omnios-${VER}.qcow2"
 
       - name: Create VDI image
         if: ${{ inputs.create_vdi == 'true' }}
         run: |
+          VER="${{ inputs.version }}"
           qemu-img convert -f raw -O vdi \
-            "release/omnios-${{ inputs.version }}.img" \
-            "release/omnios-${{ inputs.version }}.vdi"
-          echo "Created: omnios-${{ inputs.version }}.vdi"
+            "release/omnios-${VER}.img" \
+            "release/omnios-${VER}.vdi"
 
       - name: Create VMDK image
         if: ${{ inputs.create_vmdk == 'true' }}
         run: |
+          VER="${{ inputs.version }}"
           qemu-img convert -f raw -O vmdk \
-            "release/omnios-${{ inputs.version }}.img" \
-            "release/omnios-${{ inputs.version }}.vmdk"
-          echo "Created: omnios-${{ inputs.version }}.vmdk"
+            "release/omnios-${VER}.img" \
+            "release/omnios-${VER}.vmdk"
 
       # ──────────────────────────────────────────────
-      #  6. Generate checksums + docs
+      #  6. Checksums + docs
       # ──────────────────────────────────────────────
       - name: Generate checksums
         run: |
@@ -176,61 +175,52 @@ jobs:
 
       - name: Generate README
         run: |
-          cat > release/README.txt << 'EOF'
-          ╔══════════════════════════════════════════════════════════════╗
-          ║                    OmniOS ${{ inputs.version }}                          ║
-          ║              Terminal Operating System                      ║
-          ╚══════════════════════════════════════════════════════════════╝
+          VER="${{ inputs.version }}"
+          cat > release/README.txt << EOF
+          ================================================================
+                         OmniOS ${VER}
+                    Terminal Operating System
+          ================================================================
 
-          ── What's Included ─────────────────────────────────────────────
-
-            omnios-${{ inputs.version }}.img          Raw disk image
-            omnios-${{ inputs.version }}.qcow2        QEMU QCOW2 image (if selected)
-            omnios-${{ inputs.version }}.vdi          VirtualBox image (if selected)
-            omnios-${{ inputs.version }}.vmdk         VMware image (if selected)
-            omnios-${{ inputs.version }}-kernel.elf   Kernel ELF (for GDB debugging)
-            SHA256SUMS.txt              File checksums
-            README.txt                  This file
-
-          ── Quick Start (QEMU) ──────────────────────────────────────────
+          QUICK START (QEMU)
+          ----------------------------------------------------------------
 
             Using RAW image:
-              qemu-system-i386 -drive format=raw,file=omnios-${{ inputs.version }}.img -m 256M
+              qemu-system-i386 -drive format=raw,file=omnios-${VER}.img -m 256M
 
-            Using QCOW2 image:
-              qemu-system-i386 -drive format=qcow2,file=omnios-${{ inputs.version }}.qcow2 -m 256M
+            Using QCOW2:
+              qemu-system-i386 -drive format=qcow2,file=omnios-${VER}.qcow2 -m 256M
 
-            With serial console:
-              qemu-system-i386 -drive format=raw,file=omnios-${{ inputs.version }}.img -m 256M -serial stdio
+            With serial output:
+              qemu-system-i386 -drive format=raw,file=omnios-${VER}.img -m 256M -serial stdio
 
-          ── Quick Start (VirtualBox) ────────────────────────────────────
+            With GDB debug:
+              qemu-system-i386 -drive format=raw,file=omnios-${VER}.img -m 256M -s -S
 
-            1. Create a new VM: Type=Other, Version=Other/Unknown
-            2. Set RAM to 256MB
-            3. Use existing disk -> select omnios-${{ inputs.version }}.vdi
-            4. Settings -> System -> uncheck "Enable EFI"
-            5. Start the VM
+              Then: gdb omnios-${VER}-kernel.elf
+                    (gdb) target remote :1234
+                    (gdb) continue
 
-          ── Quick Start (VMware) ────────────────────────────────────────
+          QUICK START (VirtualBox)
+          ----------------------------------------------------------------
 
-            1. Create a new VM: Guest OS = Other
-            2. Set RAM to 256MB
-            3. Use existing disk -> select omnios-${{ inputs.version }}.vmdk
+            1. New VM -> Type: Other, Version: Other/Unknown
+            2. RAM: 256MB
+            3. Use existing disk -> omnios-${VER}.vdi
+            4. Settings -> System -> uncheck Enable EFI
+            5. Start
+
+          QUICK START (VMware)
+          ----------------------------------------------------------------
+
+            1. New VM -> Guest OS: Other
+            2. RAM: 256MB
+            3. Use existing disk -> omnios-${VER}.vmdk
             4. Ensure BIOS boot (not UEFI)
             5. Power on
 
-          ── Debugging with GDB ──────────────────────────────────────────
-
-            Terminal 1:
-              qemu-system-i386 -drive format=raw,file=omnios-${{ inputs.version }}.img -m 256M -s -S
-
-            Terminal 2:
-              gdb omnios-${{ inputs.version }}-kernel.elf
-              (gdb) target remote :1234
-              (gdb) break kernel_main
-              (gdb) continue
-
-          ── Shell Commands ──────────────────────────────────────────────
+          SHELL COMMANDS
+          ----------------------------------------------------------------
 
             help              Show all commands
             clear / cls       Clear screen
@@ -252,119 +242,135 @@ jobs:
             halt              Halt CPU
             panic             Test kernel panic
 
-          ── System Info ─────────────────────────────────────────────────
+          SYSTEM INFO
+          ----------------------------------------------------------------
 
-            Architecture:   x86 (i686) 32-bit
-            Boot:           Stage1 MBR + Stage2 ELF loader
-            Filesystem:     FAT32
-            Display:        VGA text mode 80x25
-            Keyboard:       PS/2 IRQ1
-            Build:          SCons + i686-elf-gcc 11.2.0
+            Architecture:   x86 (i686) 32-bit Protected Mode
+            Boot:           Stage1 MBR + Stage2 FAT32 ELF loader
+            Display:        VGA text mode 80x25 (16 colours)
+            Keyboard:       PS/2 IRQ1 with line editing
+            Toolchain:      i686-elf-gcc 11.2.0, NASM, SCons
 
-          ── Source Code ─────────────────────────────────────────────────
+          SOURCE CODE
+          ----------------------------------------------------------------
 
             https://github.com/${{ github.repository }}
-
-          ── License ─────────────────────────────────────────────────────
-
-            See LICENSE file in the repository.
+            Based on: https://github.com/nanobyte-dev/nanobyte_os
 
           EOF
 
       # ──────────────────────────────────────────────
-      #  7. Create zip archive
+      #  7. Zip
       # ──────────────────────────────────────────────
       - name: Create release zip
         run: |
+          VER="${{ inputs.version }}"
           cd release
-          zip -9 "../omnios-${{ inputs.version }}-all.zip" *
+          zip -9 "../omnios-${VER}-all.zip" *
           cd ..
-          ls -lah "omnios-${{ inputs.version }}-all.zip"
+          ls -lah "omnios-${VER}-all.zip"
 
       # ──────────────────────────────────────────────
       #  8. Smoke test
       # ──────────────────────────────────────────────
       - name: Smoke test
         run: |
-          echo "=== Running QEMU smoke test ==="
+          VER="${{ inputs.version }}"
           timeout 10 qemu-system-i386 \
-            -drive format=raw,file="release/omnios-${{ inputs.version }}.img" \
+            -drive format=raw,file="release/omnios-${VER}.img" \
             -display none \
             -serial stdio \
             -no-reboot \
             -m 256M || true
-          echo "=== Smoke test complete ==="
 
       # ──────────────────────────────────────────────
-      #  9. List everything
+      #  9. Build file list for release
       # ──────────────────────────────────────────────
-      - name: Release contents
+      - name: Build upload file list
+        id: files
         run: |
-          echo "╔══════════════════════════════════════════╗"
-          echo "║     OmniOS ${{ inputs.version }} Release Files        ║"
-          echo "╚══════════════════════════════════════════╝"
-          echo ""
-          ls -lah release/
-          echo ""
-          echo "── Checksums ──"
-          cat release/SHA256SUMS.txt
+          VER="${{ inputs.version }}"
+          FILES=""
+          
+          # Always include these
+          FILES="release/omnios-${VER}.img"
+          FILES="${FILES}\nrelease/SHA256SUMS.txt"
+          FILES="${FILES}\nrelease/README.txt"
+          FILES="${FILES}\nomnios-${VER}-all.zip"
+          
+          # Kernel ELF
+          if [ -f "release/omnios-${VER}-kernel.elf" ]; then
+            FILES="${FILES}\nrelease/omnios-${VER}-kernel.elf"
+          fi
+          
+          # Optional formats
+          if [ -f "release/omnios-${VER}.qcow2" ]; then
+            FILES="${FILES}\nrelease/omnios-${VER}.qcow2"
+          fi
+          if [ -f "release/omnios-${VER}.vdi" ]; then
+            FILES="${FILES}\nrelease/omnios-${VER}.vdi"
+          fi
+          if [ -f "release/omnios-${VER}.vmdk" ]; then
+            FILES="${FILES}\nrelease/omnios-${VER}.vmdk"
+          fi
+          
+          echo -e "$FILES" > /tmp/release_files.txt
+          echo "=== Files to upload ==="
+          cat /tmp/release_files.txt
 
       # ──────────────────────────────────────────────
       #  10. Generate release notes
       # ──────────────────────────────────────────────
       - name: Generate release notes
-        id: release_notes
         run: |
-          cat > /tmp/release_notes.md << 'NOTES'
-          ## OmniOS v${{ inputs.version }}
+          VER="${{ inputs.version }}"
+          cat > /tmp/release_notes.md << NOTES
+          ## OmniOS v${VER}
 
           **Terminal Operating System** built on the nanobyte_os kernel.
 
-          ### 🖥️ Quick Start
+          ### Quick Start
 
-          ```bash
-          # QEMU (RAW image)
-          qemu-system-i386 -drive format=raw,file=omnios-${{ inputs.version }}.img -m 256M
+          \`\`\`bash
+          # QEMU (RAW)
+          qemu-system-i386 -drive format=raw,file=omnios-${VER}.img -m 256M
 
-          # QEMU (QCOW2 image)
-          qemu-system-i386 -drive format=qcow2,file=omnios-${{ inputs.version }}.qcow2 -m 256M
-          ```
+          # QEMU (QCOW2)
+          qemu-system-i386 -drive format=qcow2,file=omnios-${VER}.qcow2 -m 256M
+          \`\`\`
 
-          ### 📦 Downloads
+          ### Downloads
 
           | File | Format | Use With |
           |------|--------|----------|
-          | `omnios-${{ inputs.version }}.img` | RAW | QEMU, dd to USB |
-          | `omnios-${{ inputs.version }}.qcow2` | QCOW2 | QEMU (snapshots) |
-          | `omnios-${{ inputs.version }}.vdi` | VDI | VirtualBox |
-          | `omnios-${{ inputs.version }}.vmdk` | VMDK | VMware |
-          | `omnios-${{ inputs.version }}-kernel.elf` | ELF | GDB debugging |
+          | \`omnios-${VER}.img\` | RAW | QEMU, dd to USB |
+          | \`omnios-${VER}.qcow2\` | QCOW2 | QEMU (snapshots) |
+          | \`omnios-${VER}.vdi\` | VDI | VirtualBox |
+          | \`omnios-${VER}.vmdk\` | VMDK | VMware |
+          | \`omnios-${VER}-kernel.elf\` | ELF | GDB debugging |
+          | \`omnios-${VER}-all.zip\` | ZIP | Everything in one file |
 
-          ### ⌨️ Shell Commands
+          > Only selected formats are included in each release.
 
-          `help` `clear` `echo` `version` `sysinfo` `meminfo` `cpuinfo`
-          `history` `color` `calc` `ascii` `hex` `peek` `poke`
-          `uptime` `banner` `reboot` `halt` `panic`
+          ### Shell Commands
 
-          ### 🔧 System
+          \`help\` \`clear\` \`echo\` \`version\` \`sysinfo\` \`meminfo\` \`cpuinfo\`
+          \`history\` \`color\` \`calc\` \`ascii\` \`hex\` \`peek\` \`poke\`
+          \`uptime\` \`banner\` \`reboot\` \`halt\` \`panic\`
+
+          ### System
 
           - **Arch:** x86 (i686) 32-bit Protected Mode
           - **Boot:** Stage1 MBR + Stage2 FAT32 ELF loader
-          - **Display:** VGA text 80×25 with 16 colours
-          - **Input:** PS/2 keyboard with full line editing
-          - **Features:** Command history, cursor movement, colour themes
-
-          ### 🔗 Links
-
-          - [Source Code](https://github.com/${{ github.repository }})
-          - [Based on nanobyte_os](https://github.com/nanobyte-dev/nanobyte_os)
+          - **Display:** VGA text 80x25 with 16 colours
+          - **Input:** PS/2 keyboard with line editing + history
 
           ---
-          *SHA256 checksums included in `SHA256SUMS.txt`*
+          *Checksums in \`SHA256SUMS.txt\`*
           NOTES
 
       # ──────────────────────────────────────────────
-      #  11. Create GitHub Release
+      #  11. Create GitHub Release (only existing files)
       # ──────────────────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -376,13 +382,40 @@ jobs:
           make_latest: true
           files: |
             release/omnios-${{ inputs.version }}.img
-            release/omnios-${{ inputs.version }}.qcow2
-            release/omnios-${{ inputs.version }}.vdi
-            release/omnios-${{ inputs.version }}.vmdk
             release/omnios-${{ inputs.version }}-kernel.elf
             release/SHA256SUMS.txt
             release/README.txt
             omnios-${{ inputs.version }}-all.zip
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload optional QCOW2
+        if: ${{ inputs.create_qcow2 == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          files: release/omnios-${{ inputs.version }}.qcow2
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload optional VDI
+        if: ${{ inputs.create_vdi == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          files: release/omnios-${{ inputs.version }}.vdi
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload optional VMDK
+        if: ${{ inputs.create_vmdk == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          files: release/omnios-${{ inputs.version }}.vmdk
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -396,11 +429,11 @@ jobs:
           echo "║   OmniOS ${{ inputs.version }} Released!              ║"
           echo "╚══════════════════════════════════════════╝"
           echo ""
-          echo "  Tag:        v${{ inputs.version }}"
-          echo "  Title:      ${{ inputs.release_name }}"
+          echo "  Tag:         v${{ inputs.version }}"
+          echo "  Title:       ${{ inputs.release_name }}"
           echo "  Pre-release: ${{ inputs.prerelease }}"
-          echo "  QCOW2:      ${{ inputs.create_qcow2 }}"
-          echo "  VDI:        ${{ inputs.create_vdi }}"
-          echo "  VMDK:       ${{ inputs.create_vmdk }}"
+          echo "  QCOW2:       ${{ inputs.create_qcow2 }}"
+          echo "  VDI:         ${{ inputs.create_vdi }}"
+          echo "  VMDK:        ${{ inputs.create_vmdk }}"
           echo ""
-          echo "  View at: https://github.com/${{ github.repository }}/releases/tag/v${{ inputs.version }}"
+          echo "  URL: https://github.com/${{ github.repository }}/releases/tag/v${{ inputs.version }}"
