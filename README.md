@@ -29,5 +29,5 @@ Finally, you should be able to run `scons`. Use `scons run` to test your OS usin
 
 ## Links
 
-* [Discord channel](https://discord.gg/RgHc5XrCEw)
-* [Patreon](https://www.patreon.com/nanobyte)
+* [Discord channel](https://discord.gg/RgHc5XrCEw) (Not owned by OmniNodeCo)
+* [Patreon](https://www.patreon.com/nanobyte) (Not owned by OmniNodeCo)
