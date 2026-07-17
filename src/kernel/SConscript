@@ -17,6 +17,7 @@ env.Append(
         env.Dir('.').srcnode(),
         env.Dir('drivers').srcnode(),
         env.Dir('shell').srcnode(),
+        env.Dir('shell/commands').srcnode(),
         env['PROJECTDIR'].Dir('src/libs')
     ],
     ASFLAGS = [ '-I', env.Dir('.').srcnode(), '-f', 'elf' ]

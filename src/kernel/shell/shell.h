@@ -14,7 +14,6 @@
 #define SHELL_MAX_ARGS      32
 #define SHELL_HISTORY_SIZE  32
 
-/* Max packages */
 #define PKG_MAX_PACKAGES    32
 #define PKG_NAME_LEN        32
 #define PKG_DESC_LEN        64
@@ -28,7 +27,6 @@ typedef struct {
     char  tokens[SHELL_MAX_INPUT];
 } ShellCmd;
 
-/* Package definition */
 typedef struct {
     char name[PKG_NAME_LEN];
     char description[PKG_DESC_LEN];
@@ -38,11 +36,11 @@ typedef struct {
     void (*on_run)(ShellCmd *cl);
 } Package;
 
-/* ---- History API ---- */
+/* History */
 extern int         s_hist_count;
 const char        *history_get(int offset);
 
-/* ---- Package API ---- */
+/* Packages */
 extern Package     g_packages[];
 extern int         g_package_count;
 
@@ -53,7 +51,7 @@ bool PKG_Uninstall(const char *name);
 bool PKG_IsInstalled(const char *name);
 bool PKG_Run(const char *name, ShellCmd *cl);
 
-/* ---- Shell API ---- */
+/* Shell */
 void Shell_Run(void);
 void Shell_ParseLine(const char *input, ShellCmd *out);
 void Shell_PrintPrompt(void);

@@ -1,0 +1,2 @@
+Hello from OmniOS!
+This file lives on the FAT32 filesystem.
