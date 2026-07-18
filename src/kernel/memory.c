@@ -5,7 +5,7 @@ void* memcpy(void* dst, const void* src, size_t num)
     uint8_t* u8Dst = (uint8_t *)dst;
     const uint8_t* u8Src = (const uint8_t *)src;
 
-    for (size_t i = 0; i < num; i++)
+    for (size_t) i = 0; i < num; i++)
         u8Dst[i] = u8Src[i];
 
     return dst;
