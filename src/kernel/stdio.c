@@ -2,7 +2,7 @@
    OmniOS - Kernel stdio
    Wires putc/puts/printf to the VGA text driver.
    Supports: %d %i %u %x %X %o %b %s %c %p %% with
-             width, zero-padding, left-align (-), sign (+)
+              width, zero-padding, left-align (-), sign (+)
    ============================================================ */
 #include "stdio.h"
 #include "arch/i686/vga_text.h"
@@ -258,7 +258,7 @@ static int do_printf(PrintCtx *ctx, const char *fmt, va_list ap)
         }
     }
 done:
-    if (ctx->buf && (ctx->size == 0 || ctx->pos < ctx->size))
+    if (ctx->buf && ctx->size > 0 && ctx->pos < ctx->size)
         ctx->buf[ctx->pos] = '\0';
     return ctx->pos;
 }
