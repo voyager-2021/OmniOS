@@ -16,14 +16,9 @@ static int sh_strlen(const char *s)
     int n = 0; while (s[n]) n++; return n;
 }
 
-static void sh_strcpy(char *d, const char *s, int maxlen)
+static void sh_strcpy(char *d, const char *s)
 {
-    int i = 0;
-    while (i < maxlen - 1 && *s) {
-        *d++ = *s++;
-        i++;
-    }
-    *d = '\0';
+    while (*s) *d++ = *s++; *d = '\0';
 }
 
 static void sh_memmove(char *dst, const char *src, int n)
@@ -47,7 +42,7 @@ static void history_push(const char *line)
         while (*a && *b && *a == *b) { a++; b++; }
         if (*a == '\0' && *b == '\0') return;
     }
-    sh_strcpy(s_history_buf[s_hist_head], line, SHELL_MAX_INPUT);
+    sh_strcpy(s_history_buf[s_hist_head], line);
     s_hist_head = (s_hist_head + 1) % SHELL_HISTORY_SIZE;
     if (s_hist_count < SHELL_HISTORY_SIZE) s_hist_count++;
 }
@@ -125,7 +120,7 @@ static void line_load_history(LineState *ls, int offset)
 {
     if (offset == 0) {
         line_clear_display(ls);
-        sh_strcpy(ls->buf, ls->saved, SHELL_MAX_INPUT);
+        sh_strcpy(ls->buf, ls->saved);
         ls->len = sh_strlen(ls->buf);
         ls->pos = ls->len;
         line_reprint(ls);
@@ -134,9 +129,9 @@ static void line_load_history(LineState *ls, int offset)
     }
     const char *h = history_get(offset);
     if (!h) return;
-    if (ls->hist_offset == 0) sh_strcpy(ls->saved, ls->buf, SHELL_MAX_INPUT);
+    if (ls->hist_offset == 0) sh_strcpy(ls->saved, ls->buf);
     line_clear_display(ls);
-    sh_strcpy(ls->buf, h, SHELL_MAX_INPUT);
+    sh_strcpy(ls->buf, h);
     ls->len = sh_strlen(ls->buf);
     ls->pos = ls->len;
     ls->hist_offset = offset;
@@ -200,8 +195,8 @@ void Shell_ParseLine(const char *input, ShellCmd *cl)
 {
     cl->argc = 0;
     cl->cmd[0] = '\0';
-    sh_strcpy(cl->raw, input, sizeof(cl->raw));
-    sh_strcpy(cl->tokens, input, sizeof(cl->tokens));
+    sh_strcpy(cl->raw, input);
+    sh_strcpy(cl->tokens, input);
 
     char *p = cl->tokens;
     while (*p == ' ') p++;
@@ -213,7 +208,7 @@ void Shell_ParseLine(const char *input, ShellCmd *cl)
         while (*p == ' ') p++;
     }
 
-    if (cl->argc > 0) sh_strcpy(cl->cmd, cl->argv[0], sizeof(cl->cmd));
+    if (cl->argc > 0) sh_strcpy(cl->cmd, cl->argv[0]);
 }
 
 void Shell_PrintPrompt(void)
